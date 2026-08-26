@@ -1,0 +1,20 @@
+// Brand Colors
+export const C = {
+  red: "#8B1A1A",
+  redLight: "#a82020",
+  redDark: "#6b1414",
+  black: "#111111",
+  white: "#ffffff",
+  gray50: "#f9f9f9",
+  gray100: "#f0f0f0",
+  gray200: "#e0e0e0",
+  gray400: "#9e9e9e",
+  gray600: "#555555",
+  gray800: "#222222",
+  success: "#1a7a3a",
+  successBg: "#e6f5ec",
+  info: "#1565c0",
+  infoBg: "#e3f0fc",
+  warning: "#b45309",
+  warningBg: "#fef3e2",
+};
