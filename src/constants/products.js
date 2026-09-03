@@ -1,5 +1,5 @@
 export const PRODUCTS = [
-  { id: 1, category: "Clothing & Apparel", name: "Custom T-Shirt Printing", description: "Full-color sublimation or screen printing on quality fabric. Single to bulk orders.", price: 180, unit: "per piece", minQty: 1, image: "", popular: true },
+  { id: 1, category: "Clothing & Apparel", name: "Custom T-Shirt Printing", description: "Full-color sublimation or screen printing on quality fabric. Single to bulk orders.", price: 180, unit: "per piece", minQty: 1, image: "👕", popular: true },
   { id: 2, category: "Clothing & Apparel", name: "Polo Shirt", description: "Embroidered or printed polo shirts — perfect for uniforms and events.", price: 350, unit: "per piece", minQty: 5, image: "👔" },
   { id: 3, category: "Clothing & Apparel", name: "Hoodie / Jacket Printing", description: "Heat transfer or sublimation printing on hoodies and varsity jackets.", price: 550, unit: "per piece", minQty: 3, image: "🧥" },
   { id: 4, category: "School Supplies", name: "School ID with Lanyard", description: "PVC school ID with lamination + custom printed lanyard. Fast turnaround.", price: 65, unit: "per set", minQty: 10, image: "🪪", popular: true },

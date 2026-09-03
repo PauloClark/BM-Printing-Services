@@ -62,6 +62,60 @@ async function ensureReportsDir() {
   await fs.mkdir(REPORTS_DIR, { recursive: true });
 }
 
+// Generate daily summary data for AI
+function buildDailySummary(orders, dateString) {
+  const totalOrders = orders.length;
+  const completedOrders = orders.filter(o => o.status === 'Completed').length;
+  const pendingOrders = orders.filter(o => 
+    o.status === 'Pending' || o.status === 'Quoted' || o.status === 'Confirmed' || o.status === 'Payment Pending'
+  ).length;
+  const cancelledOrders = orders.filter(o => o.status === 'Cancelled').length;
+  const revenue = orders.reduce((sum, order) => sum + Number(order.totalAmount || 0), 0);
+  const averageOrderValue = totalOrders > 0 ? revenue / totalOrders : 0;
+
+  // Top service
+  const serviceCounts = {};
+  orders.forEach(order => {
+    const product = order.items?.[0]?.productName || 'Unknown';
+    serviceCounts[product] = (serviceCounts[product] || 0) + 1;
+  });
+  const sortedServices = Object.entries(serviceCounts).sort((a, b) => b[1] - a[1]);
+  const topService = sortedServices.length > 0 ? sortedServices[0][0] : 'No orders';
+
+  // Production load
+  const inProduction = orders.filter(o => o.status === 'In Production').length;
+  const readyOrders = orders.filter(o => o.status === 'Ready').length;
+  const productionLoad = inProduction > 0 || readyOrders > 0 ? 'High' : 'Light';
+
+  // AI Insight
+  let aiInsight = '';
+  if (totalOrders > 0) {
+    const completedPct = Math.round((completedOrders / totalOrders) * 100);
+    aiInsight = `Demand is ${completedPct}% fulfilled. `;
+    if (completedOrders > 0 && completedOrders === totalOrders) {
+      aiInsight += 'All orders completed today - excellent production efficiency!';
+    } else if (completedPct >= 80) {
+      aiInsight += 'Strong completion rate - maintaining momentum';
+    } else {
+      aiInsight += 'Review pending orders - identify bottlenecks';
+    }
+  } else {
+    aiInsight = 'No orders today - consider promotional activities';
+  }
+
+  return {
+    totalOrders,
+    completedOrders,
+    pendingOrders,
+    cancelledOrders,
+    revenue,
+    averageOrderValue,
+    topService,
+    productionLoad,
+    aiInsight
+  };
+}
+
 export async function generateDailyReport(dateString, options = {}) {
   if (!validateDateString(dateString)) {
     throw new Error('Invalid report date. Use YYYY-MM-DD.');
@@ -129,12 +183,21 @@ export async function generateDailyReport(dateString, options = {}) {
   sheet.getColumn('totalPrice').numFmt = '"₱"#,##0.00';
 
   await workbook.xlsx.writeFile(filePath);
+  const summary = buildDailySummary(orders, dateString);
+
   return {
     filePath,
     fileName: path.basename(filePath),
-    totalOrders: orders.length,
-    totalSales: orders.reduce((sum, order) => sum + Number(order.totalAmount || 0), 0),
-    rows: rows.length
+    totalOrders: summary.totalOrders,
+    completedOrders: summary.completedOrders,
+    pendingOrders: summary.pendingOrders,
+    cancelledOrders: summary.cancelledOrders,
+    totalSales: summary.revenue,
+    averageOrderValue: summary.averageOrderValue,
+    topService: summary.topService,
+    productionLoad: summary.productionLoad,
+    aiInsight: summary.aiInsight,
+    downloadUrl: `/api/admin/reports/orders/${dateString}/download`
   };
 }
 
@@ -159,12 +222,19 @@ export async function getReportSummary(dateString) {
     }
   });
 
+  const summary = buildDailySummary(orders, dateString);
+
   return {
     date: dateString,
     exists,
     fileName: exists ? `${dateString}.xlsx` : null,
-    totalOrders: orders.length,
-    totalSales: orders.reduce((sum, order) => sum + Number(order.totalAmount || 0), 0),
+    totalOrders: summary.totalOrders,
+    totalSales: summary.revenue,
+    averageOrderValue: summary.averageOrderValue,
+    topService: summary.topService,
+    completedOrders: summary.completedOrders,
+    pendingOrders: summary.pendingOrders,
+    cancelledOrders: summary.cancelledOrders,
     downloadUrl: exists ? `/api/admin/reports/orders/${dateString}/download` : null
   };
 }

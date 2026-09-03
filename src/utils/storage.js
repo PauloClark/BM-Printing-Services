@@ -3,7 +3,14 @@ export const store = {
   async get(key) {
     try {
       const r = await window.storage.get(key);
-      return r ? JSON.parse(r.value) : null;
+      if (r && r.value) {
+        try {
+          return JSON.parse(r.value);
+        } catch {
+          return null;
+        }
+      }
+      return null;
     } catch {
       return null;
     }

@@ -43,7 +43,10 @@ export default function App() {
         // Load orders from MongoDB backend first
         try {
           const response = await fetch("/api/orders");
-          const data = await response.json();
+          if (!response.ok) throw new Error("Backend error");
+          const text = await response.text();
+          if (!text) throw new Error("Empty response");
+          const data = JSON.parse(text);
           if (response.ok && Array.isArray(data.orders) && data.orders.length > 0) {
             setOrders(data.orders);
           } else {
@@ -145,7 +148,10 @@ export default function App() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(order)
       });
-      const data = await response.json();
+      if (!response.ok) throw new Error("Server error");
+      const text = await response.text();
+      if (!text) throw new Error("Empty response");
+      const data = JSON.parse(text);
       if (response.ok && data.order) {
         setOrders(prev => [data.order, ...prev]);
         return data.order;

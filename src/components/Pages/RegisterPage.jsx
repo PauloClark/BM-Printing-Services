@@ -1,182 +1,262 @@
-import { useState } from "react";
-import { C } from "../../constants/colors";
-import { store } from "../../utils/storage";
-import { generateId } from "../../utils/helpers";
-import { Card } from "../Common/Card";
-import { Btn } from "../Common/Btn";
-import { Input } from "../Common/Input";
-import { BMLogo } from "../Common/BMLogo";
+import React, { useState } from 'react';
+import { showToast } from '../../utils/notifications';
+import { store } from '../../utils/storage';
 
-export const RegisterPage = ({ setPage, onLogin, showToast }) => {
+export const RegisterPage = ({ setPage, onLogin, showToast: notify }) => {
   const [form, setForm] = useState({
-    name: "",
-    email: "",
-    phone: "",
-    pass: "",
-    confirm: ""
+    name: '',
+    email: '',
+    phone: '',
+    password: '',
+    confirmPassword: ''
   });
   const [loading, setLoading] = useState(false);
-  const f = (k, v) => setForm(p => ({ ...p, [k]: v }));
 
-  const handle = async () => {
-    if (!form.name || !form.email || !form.phone || !form.pass) {
-      showToast("Please fill all fields", "error");
+  const onChange = (e) => {
+    const { name, value } = e.target;
+    setForm(prev => ({ ...prev, [name]: value }));
+  };
+
+  const register = async () => {
+    if (!form.name || !form.email || !form.phone || !form.password) {
+      notify?.('Please complete all required fields.', 'error');
       return;
     }
-    if (form.pass !== form.confirm) {
-      showToast("Passwords don't match", "error");
-      return;
-    }
-    if (form.pass.length < 6) {
-      showToast("Password must be at least 6 characters", "error");
+
+    if (form.password !== form.confirmPassword) {
+      notify?.('Passwords do not match.', 'error');
       return;
     }
 
     setLoading(true);
-
     try {
-      const response = await fetch("/api/auth/register", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
+      const response = await fetch('/api/auth/register', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           name: form.name,
           email: form.email,
           phone: form.phone,
-          password: form.pass
+          password: form.password
         })
       });
-      const data = await response.json();
 
-      if (!response.ok || !data.user) {
-        throw new Error(data.error || "Unable to create account.");
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(errorText || 'Unable to create account.');
       }
 
-      const newUser = data.user;
-      await store.set("session", newUser);
-      onLogin(newUser);
-      setPage("home");
-      showToast("🎉 Account created! Welcome to BM Printing!", "success");
+      const data = await response.json();
+      if (!data.user) {
+        throw new Error(data.error || 'Unable to create account.');
+      }
+
+      await store.set('session', data.user);
+      onLogin?.(data.user);
+      notify?.('Account created successfully.', 'success');
+      setPage?.('home');
     } catch (error) {
-      showToast(error.message || "Unable to create account.", "error");
+      console.error('Registration failed:', error);
+      notify?.(error.message || 'Unable to create account.', 'error');
     } finally {
       setLoading(false);
     }
   };
 
   return (
-    <div
-      style={{
-        minHeight: "70vh",
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        padding: 24
-      }}
-      className="fade-in"
-    >
-      <Card style={{ width: "100%", maxWidth: 440 }}>
-        <div style={{ textAlign: "center", marginBottom: 28 }}>
-          <div style={{ display: "flex", justifyContent: "center", marginBottom: 12 }}>
-            <BMLogo size={56} />
+    <div style={{
+      minHeight: 'calc(100vh - 70px)',
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'center',
+      background: '#f3f3f3',
+      padding: '32px 16px'
+    }}>
+      <div style={{
+        width: '100%',
+        maxWidth: 380,
+        background: '#f4f4f4',
+        border: '1px solid #d9d9d9',
+        borderRadius: 8,
+        boxShadow: '0 2px 12px rgba(0,0,0,0.04)',
+        padding: '28px 26px 20px',
+        textAlign: 'center'
+      }}>
+        <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 12 }}>
+          <div style={{
+            width: 62,
+            height: 62,
+            borderRadius: '50%',
+            background: '#ffffff',
+            border: '1px solid #d7d7d7',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            fontFamily: 'Georgia, serif',
+            fontWeight: 700,
+            fontSize: 28,
+            color: '#8a1f1f'
+          }}>
+            BM
           </div>
-          <h2
-            style={{
-              fontFamily: "Montserrat",
-              fontWeight: 800,
-              fontSize: 22
-            }}
-          >
-            Create Account
-          </h2>
         </div>
 
-        <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-          <Input
-            label="Full Name"
+        <h2 style={{
+          margin: '0 0 16px',
+          fontSize: 29,
+          fontWeight: 700,
+          color: '#2a2a2a',
+          fontFamily: 'Georgia, serif'
+        }}>
+          Create Account
+        </h2>
+
+        <div style={{ textAlign: 'left' }}>
+          <label style={{ display: 'block', marginBottom: 8, fontSize: 12, color: '#444' }}>
+            Full Name
+          </label>
+          <input
+            name="name"
             value={form.name}
-            onChange={v => f("name", v)}
-            placeholder="Juan dela Cruz"
+            onChange={onChange}
             required
+            style={{
+              width: '100%',
+              boxSizing: 'border-box',
+              padding: '10px 12px',
+              marginBottom: 12,
+              border: '1px solid #cfcfcf',
+              borderRadius: 4,
+              fontSize: 14,
+              background: '#fff'
+            }}
           />
-          <div
+
+          <label style={{ display: 'block', marginBottom: 8, fontSize: 12, color: '#444' }}>
+            Email
+          </label>
+          <input
+            name="email"
+            type="email"
+            value={form.email}
+            onChange={onChange}
+            required
             style={{
-              display: "grid",
-              gridTemplateColumns: "1fr 1fr",
-              gap: 14
+              width: '100%',
+              boxSizing: 'border-box',
+              padding: '10px 12px',
+              marginBottom: 12,
+              border: '1px solid #cfcfcf',
+              borderRadius: 4,
+              fontSize: 14,
+              background: '#fff'
             }}
-          >
-            <Input
-              label="Email"
-              type="email"
-              value={form.email}
-              onChange={v => f("email", v)}
-              required
-            />
-            <Input
-              label="Phone"
-              value={form.phone}
-              onChange={v => f("phone", v)}
-              placeholder="09XX-XXX-XXXX"
-              required
-            />
-          </div>
-          <div
+          />
+
+          <label style={{ display: 'block', marginBottom: 8, fontSize: 12, color: '#444' }}>
+            Phone
+          </label>
+          <input
+            name="phone"
+            value={form.phone}
+            onChange={onChange}
+            required
             style={{
-              display: "grid",
-              gridTemplateColumns: "1fr 1fr",
-              gap: 14
+              width: '100%',
+              boxSizing: 'border-box',
+              padding: '10px 12px',
+              marginBottom: 12,
+              border: '1px solid #cfcfcf',
+              borderRadius: 4,
+              fontSize: 14,
+              background: '#fff'
             }}
-          >
-            <Input
-              label="Password"
-              type="password"
-              value={form.pass}
-              onChange={v => f("pass", v)}
-              required
-            />
-            <Input
-              label="Confirm Password"
-              type="password"
-              value={form.confirm}
-              onChange={v => f("confirm", v)}
-              required
-            />
-          </div>
-          <Btn
-            size="lg"
-            onClick={handle}
-            loading={loading}
+          />
+
+          <label style={{ display: 'block', marginBottom: 8, fontSize: 12, color: '#444' }}>
+            Password
+          </label>
+          <input
+            name="password"
+            type="password"
+            value={form.password}
+            onChange={onChange}
+            required
             style={{
-              width: "100%",
-              justifyContent: "center",
-              marginTop: 4
+              width: '100%',
+              boxSizing: 'border-box',
+              padding: '10px 12px',
+              marginBottom: 12,
+              border: '1px solid #cfcfcf',
+              borderRadius: 4,
+              fontSize: 14,
+              background: '#fff'
             }}
-          >
-            Create Account
-          </Btn>
-          <p
+          />
+
+          <label style={{ display: 'block', marginBottom: 8, fontSize: 12, color: '#444' }}>
+            Confirm Password
+          </label>
+          <input
+            name="confirmPassword"
+            type="password"
+            value={form.confirmPassword}
+            onChange={onChange}
+            required
             style={{
-              textAlign: "center",
-              fontSize: 13,
-              color: C.gray400
+              width: '100%',
+              boxSizing: 'border-box',
+              padding: '10px 12px',
+              marginBottom: 18,
+              border: '1px solid #cfcfcf',
+              borderRadius: 4,
+              fontSize: 14,
+              background: '#fff'
             }}
-          >
-            Already have an account?{" "}
-            <button
-              onClick={() => setPage("login")}
-              style={{
-                color: C.red,
-                background: "none",
-                border: "none",
-                cursor: "pointer",
-                fontWeight: 700
-              }}
-            >
-              Login
-            </button>
-          </p>
+          />
         </div>
-      </Card>
+
+        <button
+          type="button"
+          onClick={register}
+          disabled={loading}
+          style={{
+            width: '100%',
+            background: '#8a1f1f',
+            color: '#fff',
+            border: 'none',
+            borderRadius: 4,
+            padding: '12px 16px',
+            fontSize: 15,
+            fontWeight: 600,
+            cursor: loading ? 'not-allowed' : 'pointer',
+            opacity: loading ? 0.8 : 1,
+            marginBottom: 18
+          }}
+        >
+          {loading ? 'Creating account...' : 'Create Account'}
+        </button>
+
+        <div style={{ fontSize: 13, color: '#666' }}>
+          Already have an account?{' '}
+          <button
+            type="button"
+            onClick={() => setPage?.('login')}
+            style={{
+              background: 'transparent',
+              border: 'none',
+              color: '#8a1f1f',
+              fontWeight: 600,
+              cursor: 'pointer',
+              padding: 0
+            }}
+          >
+            Login
+          </button>
+        </div>
+      </div>
     </div>
   );
 };
+
+export default RegisterPage;

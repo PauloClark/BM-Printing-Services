@@ -1,144 +1,187 @@
-import { useState } from "react";
-import { C } from "../../constants/colors";
-import { store } from "../../utils/storage";
-import { Card } from "../Common/Card";
-import { Btn } from "../Common/Btn";
-import { Input } from "../Common/Input";
-import { BMLogo } from "../Common/BMLogo";
+import React, { useState } from 'react';
+import { store } from '../../utils/storage';
 
 export const LoginPage = ({ setPage, onLogin, showToast }) => {
-  const [email, setEmail] = useState("");
-  const [pass, setPass] = useState("");
+  const [email, setEmail] = useState('');
+  const [pass, setPass] = useState('');
   const [loading, setLoading] = useState(false);
 
-  const handle = async () => {
-    if (!email || !pass) {
-      showToast("Enter email and password", "error");
-      return;
-    }
+  const login = async () => {
     setLoading(true);
-
     try {
-      const response = await fetch("/api/auth/login", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
+      const response = await fetch('/api/auth/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email, password: pass })
       });
-      const data = await response.json();
 
-      if (!response.ok || !data.user) {
-        throw new Error(data.error || "Invalid email or password.");
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(errorText || 'Invalid email or password.');
+      }
+
+      const data = await response.json();
+      if (!data.user) {
+        throw new Error(data.error || 'Invalid email or password.');
       }
 
       const user = data.user;
-      await store.set("session", user);
-      onLogin(user);
-      setPage(user.role === "admin" ? "admin" : "home");
-      showToast(`Welcome back, ${user.name}!`, "success");
+      await store.set('session', user);
+      onLogin?.(user);
+      showToast?.('Logged in successfully.', 'success');
+      setPage?.('home');
     } catch (error) {
-      showToast(error.message || "Invalid email or password.", "error");
+      console.error('Login failed:', error);
+      showToast?.(error.message || 'Invalid email or password.', 'error');
     } finally {
       setLoading(false);
     }
   };
 
   return (
-    <div
-      style={{
-        minHeight: "70vh",
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        padding: 24
-      }}
-      className="fade-in"
-    >
-      <Card style={{ width: "100%", maxWidth: 400 }}>
-        <div style={{ textAlign: "center", marginBottom: 28 }}>
-          <div style={{ display: "flex", justifyContent: "center", marginBottom: 12 }}>
-            <BMLogo size={56} />
+    <div style={{
+      minHeight: 'calc(100vh - 70px)',
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'center',
+      background: '#f3f3f3',
+      padding: '32px 16px'
+    }}>
+      <div style={{
+        width: '100%',
+        maxWidth: 380,
+        background: '#f4f4f4',
+        border: '1px solid #d9d9d9',
+        borderRadius: 8,
+        boxShadow: '0 2px 12px rgba(0,0,0,0.04)',
+        padding: '28px 26px 20px',
+        textAlign: 'center'
+      }}>
+        <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 12 }}>
+          <div style={{
+            width: 62,
+            height: 62,
+            borderRadius: '50%',
+            background: '#ffffff',
+            border: '1px solid #d7d7d7',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            fontFamily: 'Georgia, serif',
+            fontWeight: 700,
+            fontSize: 28,
+            color: '#8a1f1f'
+          }}>
+            BM
           </div>
-          <h2
-            style={{
-              fontFamily: "Montserrat",
-              fontWeight: 800,
-              fontSize: 22
-            }}
-          >
-            Welcome Back
-          </h2>
-          <p
-            style={{
-              color: C.gray400,
-              fontSize: 13,
-              marginTop: 4
-            }}
-          >
-            Login to your BM Printing account
-          </p>
         </div>
 
-        <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-          <Input
-            label="Email Address"
-            type="email"
+        <h2 style={{
+          margin: '0 0 16px',
+          fontSize: 29,
+          fontWeight: 700,
+          color: '#2a2a2a',
+          fontFamily: 'Georgia, serif'
+        }}>
+          Welcome Back
+        </h2>
+
+        <p style={{
+          margin: '0 0 18px',
+          fontSize: 13,
+          color: '#666',
+          fontFamily: 'sans-serif'
+        }}>
+          Login in your BM Printing account
+        </p>
+
+        <div style={{ textAlign: 'left' }}>
+          <label style={{ display: 'block', marginBottom: 8, fontSize: 12, color: '#444' }}>
+            Email Address
+          </label>
+          <input
             value={email}
-            onChange={setEmail}
-            placeholder="your@email.com"
+            onChange={e => setEmail(e.target.value)}
+            type="email"
+            required
+            style={{
+              width: '100%',
+              boxSizing: 'border-box',
+              padding: '10px 12px',
+              marginBottom: 16,
+              border: '1px solid #cfcfcf',
+              borderRadius: 4,
+              fontSize: 14,
+              background: '#fff'
+            }}
           />
-          <Input
-            label="Password"
-            type="password"
+
+          <label style={{ display: 'block', marginBottom: 8, fontSize: 12, color: '#444' }}>
+            Password
+          </label>
+          <input
             value={pass}
-            onChange={setPass}
-            placeholder="••••••••"
+            onChange={e => setPass(e.target.value)}
+            type="password"
+            required
+            style={{
+              width: '100%',
+              boxSizing: 'border-box',
+              padding: '10px 12px',
+              marginBottom: 18,
+              border: '1px solid #cfcfcf',
+              borderRadius: 4,
+              fontSize: 14,
+              background: '#fff'
+            }}
           />
-          <Btn
-            size="lg"
-            onClick={handle}
-            loading={loading}
-            style={{
-              width: "100%",
-              justifyContent: "center",
-              marginTop: 4
-            }}
-          >
-            Login
-          </Btn>
-          <p
-            style={{
-              textAlign: "center",
-              fontSize: 13,
-              color: C.gray400
-            }}
-          >
-            Don't have an account?{" "}
-            <button
-              onClick={() => setPage("register")}
-              style={{
-                color: C.red,
-                background: "none",
-                border: "none",
-                cursor: "pointer",
-                fontWeight: 700
-              }}
-            >
-              Register
-            </button>
-          </p>
-          <div
-            style={{
-              background: C.infoBg,
-              borderRadius: 8,
-              padding: "10px 14px",
-              fontSize: 12,
-              color: C.info
-            }}
-          >
-            <strong>Admin demo:</strong> admin@bm.com / admin123
-          </div>
         </div>
-      </Card>
+
+        <button
+          type="button"
+          onClick={login}
+          disabled={loading}
+          style={{
+            width: '100%',
+            background: '#8a1f1f',
+            color: '#fff',
+            border: 'none',
+            borderRadius: 4,
+            padding: '12px 16px',
+            fontSize: 15,
+            fontWeight: 600,
+            cursor: loading ? 'not-allowed' : 'pointer',
+            opacity: loading ? 0.8 : 1,
+            marginBottom: 18
+          }}
+        >
+          {loading ? 'Logging in...' : 'Login'}
+        </button>
+
+        <div style={{ fontSize: 13, color: '#666' }}>
+          Don&apos;t have an account?{' '}
+          <button
+            type="button"
+            onClick={() => setPage?.('register')}
+            style={{
+              background: 'transparent',
+              border: 'none',
+              color: '#8a1f1f',
+              fontWeight: 600,
+              cursor: 'pointer',
+              padding: 0
+            }}
+          >
+            Register
+          </button>
+        </div>
+
+        <div style={{ marginTop: 18, fontSize: 12, color: '#777' }}>
+          Admin demo: <span style={{ fontWeight: 600 }}>admin@bm.com</span> / <span style={{ fontWeight: 600 }}>admin123</span>
+        </div>
+      </div>
     </div>
   );
 };
+
+export default LoginPage;
