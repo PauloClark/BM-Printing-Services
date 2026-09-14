@@ -99,11 +99,14 @@ export const checkAdminLogin = async (req, res, next) => {
     return next();
   }
   
-  // Also check database users
+  // Also check database users with bcrypt comparison
   const user = await User.findOne({ email });
-  if (user && user.password === password) {
-    req.user = user;
-    return next();
+  if (user) {
+    const match = await bcrypt.compare(password, user.password);
+    if (match) {
+      req.user = user;
+      return next();
+    }
   }
   
   return res.status(401).json({

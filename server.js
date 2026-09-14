@@ -2,6 +2,7 @@ import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
 import path from 'path';
+import fs from 'fs';
 import Joi from 'joi';
 import { fileURLToPath } from 'url';
 import { connectMongo, seedCatalogAndAdmin, User, Product, Order, Inventory, Production, OrderFile } from './server/db.js';
@@ -14,11 +15,59 @@ const app = express();
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const FRONTEND_ORIGINS = ['http://localhost:3000', 'http://127.0.0.1:3000'];
 
-app.use(express.json({ limit: '256kb' }));
+app.use(express.json({ limit: '50mb' }));
 app.use(cors({ origin: FRONTEND_ORIGINS, credentials: true }));
 
 function safeText(value) {
   return typeof value === 'string' ? value : '';
+}
+
+function uploadDesignFile(fileData) {
+  // If no file data, return null
+  if (!fileData || !fileData.base64) {
+    return null;
+  }
+
+  const base64 = fileData.base64;
+  const originalName = fileData.originalName || 'design';
+  const fileType = fileData.fileType || 'unknown';
+  const fileSize = fileData.fileSize || 0;
+
+  // Validate file extension
+  const ext = originalName.split('.').pop().toLowerCase();
+  const allowedExtensions = ['jpg', 'jpeg', 'png', 'webp', 'pdf', 'svg'];
+  if (!allowedExtensions.includes(ext)) {
+    return { error: 'Invalid file type.' };
+  }
+
+  // Validate file size (10 MB max)
+  const maxSize = 10 * 1024 * 1024;
+  if (fileSize > maxSize) {
+    return { error: 'File is too large. Maximum file size is 10 MB.' };
+  }
+
+  // Generate unique filename
+  const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
+  const fileName = `${safeText(fileData.customerId)}-${uniqueSuffix}.${ext}`;
+  const uploadDir = path.join(__dirname, '..', 'uploads', 'orders');
+  const filePath = path.join(uploadDir, fileName);
+
+  // Ensure directory exists
+  if (!fs.existsSync(uploadDir)) {
+    fs.mkdirSync(uploadDir, { recursive: true });
+  }
+
+  // Decode base64 and write file
+  const base64Data = base64.replace(/^data:[^;]+;base64,/, '');
+  fs.writeFileSync(filePath, base64Data, 'base64');
+
+  return {
+    filePath,
+    fileName,
+    originalName,
+    fileType,
+    fileSize
+  };
 }
 
 function serializeOrder(order) {
@@ -75,8 +124,143 @@ app.get('/api/products', async (req, res) => {
     image: product.image,
     description: product.description,
     minQty: product.minQty,
-    category: product.category
+    category: product.category,
+    stock: product.stock,
+    lowStockThreshold: product.lowStockThreshold,
+    status: product.stock <= 0 ? 'Out of Stock' : product.stock <= product.lowStockThreshold ? 'Low Stock' : 'In Stock'
   })) });
+});
+
+function uploadProductImage(fileData) {
+  if (!fileData || !fileData.base64) {
+    return { error: 'No file data.' };
+  }
+
+  const base64 = fileData.base64;
+  const originalName = fileData.originalName || 'product-image';
+  const fileType = fileData.fileType || 'unknown';
+
+  // Validate file extension
+  const ext = originalName.split('.').pop().toLowerCase();
+  const allowedExtensions = ['jpg', 'jpeg', 'png', 'webp'];
+  if (!allowedExtensions.includes(ext)) {
+    return { error: 'Invalid file type. Allowed: JPG, JPEG, PNG, WEBP.' };
+  }
+
+  // Validate file size (10 MB max)
+  const maxSize = 10 * 1024 * 1024;
+  if (fileData.fileSize > maxSize) {
+    return { error: 'File is too large. Maximum file size is 10 MB.' };
+  }
+
+  // Generate unique filename
+  const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
+  const fileName = `${Date.now()}-${Math.round(Math.random() * 1E9)}.${ext}`;
+  const uploadDir = path.join(__dirname, '..', 'uploads', 'products');
+  const filePath = path.join(uploadDir, fileName);
+
+  // Ensure directory exists
+  if (!fs.existsSync(uploadDir)) {
+    fs.mkdirSync(uploadDir, { recursive: true });
+  }
+
+  // Decode base64 and write file
+  const base64Data = base64.replace(/^data:[^;]+;base64,/, '');
+  fs.writeFileSync(filePath, base64Data, 'base64');
+
+  return {
+    filePath,
+    fileName,
+    originalName,
+    fileType,
+    fileSize: fileData.fileSize
+  };
+}
+
+app.patch('/api/products/:id', requireAdmin, async (req, res) => {
+  try {
+    const productId = safeText(req.params.id);
+    const { name, description, price, category, lowStockThreshold, status, stock, image } = req.body || {};
+
+    const updateData = {};
+    if (name !== undefined) updateData.name = name;
+    if (description !== undefined) updateData.description = description;
+    if (price !== undefined) updateData.price = price;
+    if (category !== undefined) updateData.category = category;
+    if (lowStockThreshold !== undefined) updateData.lowStockThreshold = lowStockThreshold;
+    if (stock !== undefined) updateData.stock = stock;
+    if (image !== undefined) updateData.image = image;
+
+    let product = await Product.findOne({ id: Number(productId) });
+    if (product) {
+      await Product.updateOne({ id: Number(productId) }, updateData);
+      product = await Product.findOne({ id: Number(productId) });
+    } else {
+      product = await Product.create({
+        id: Number(productId),
+        name,
+        price: Number(price || 0),
+        description: description || '',
+        category: category || 'Printing',
+        stock: stock ? Number(stock) : 0,
+        lowStockThreshold: lowStockThreshold ? Number(lowStockThreshold) : 10,
+        active: true,
+        image: image || ''
+      });
+    }
+
+    res.json({ success: true, product });
+  } catch (error) {
+    console.error('Product edit failed:', error);
+    res.status(500).json({ error: 'Unable to edit product.' });
+  }
+});
+
+app.patch('/api/products/:id/stock/increase', requireAdmin, async (req, res) => {
+  try {
+    const productId = safeText(req.params.id);
+    const { amount } = req.body || { amount: 1 };
+
+    const product = await Product.findOne({ id: Number(productId) });
+    if (!product) {
+      return res.status(404).json({ error: 'Product not found.' });
+    }
+
+    const qty = Number(amount);
+    if (isNaN(qty) || qty <= 0) {
+      return res.status(400).json({ error: 'Amount must be a positive number.' });
+    }
+
+    product.stock += qty;
+    await product.save();
+
+    res.json({ success: true, product });
+  } catch (error) {
+    console.error('Stock increase failed:', error);
+    res.status(500).json({ error: 'Unable to increase stock.' });
+  }
+});
+
+app.patch('/api/products/:id/stock/decrease', requireAdmin, async (req, res) => {
+  try {
+    const productId = safeText(req.params.id);
+
+    const product = await Product.findOne({ id: Number(productId) });
+    if (!product) {
+      return res.status(404).json({ error: 'Product not found.' });
+    }
+
+    product.stock -= 1;
+    if (product.stock < 0) {
+      product.stock = 0;
+    }
+    await product.save();
+
+    res.json({ success: true, product });
+  } catch (error) {
+    console.error('Stock decrease failed:', error);
+    res.status(500).json({ error: 'Unable to decrease stock.' });
+  }
 });
 
 app.get('/api/orders', async (req, res) => {
@@ -121,6 +305,8 @@ app.post('/api/orders', async (req, res) => {
     const productId = Number(body.productId);
     const productName = safeText(body.product || body.productName);
     const total = Number(body.total || 0);
+    const designNotes = safeText(body.designNotes);
+    const designFileData = body.designFile || null;
 
     if (!customerName || !customerEmail || !contactNumber || !productName || !paymentMethod || !quantity || !productId) {
       return res.status(400).json({ error: 'Missing required order information.' });
@@ -128,6 +314,29 @@ app.post('/api/orders', async (req, res) => {
 
     const orderId = safeText(body.id || body.orderId) || `ORD-${Date.now().toString(36).toUpperCase()}`;
     const createdAt = body.createdAt ? new Date(body.createdAt) : new Date();
+
+    // Handle design file upload
+    let designFileResult = null;
+    if (designFileData) {
+      designFileResult = uploadDesignFile(designFileData);
+      if (designFileResult.error) {
+        return res.status(400).json({ error: designFileResult.error });
+      }
+    }
+
+    let stockDeductionResult = { success: true };
+    if (productId && quantity > 0) {
+      const product = await Product.findOne({ id: productId });
+      if (product) {
+        const currentStock = product.stock;
+        if (currentStock < quantity) {
+          stockDeductionResult = { error: 'Insufficient product stock.', available: currentStock };
+        } else {
+          await Product.updateOne({ id: productId }, { $inc: { stock: -quantity } });
+          stockDeductionResult = { success: true, newStock: currentStock - quantity };
+        }
+      }
+    }
 
     const order = await Order.create({
       orderId,
@@ -147,13 +356,18 @@ app.post('/api/orders', async (req, res) => {
       paymentMethod,
       status: safeText(body.status) || 'Pending',
       notes,
+      designNotes,
+      designFilePath: designFileResult ? designFileResult.filePath : '',
+      designFileName: designFileResult ? designFileResult.fileName : '',
+      designFileType: designFileResult ? designFileResult.fileType : '',
+      designFileSize: designFileResult ? designFileResult.fileSize : 0,
       createdAt
     });
 
     const reportDate = getDefaultReportDate();
     const reportSummary = await generateDailyReport(reportDate, { regenerate: false });
 
-    res.json({ order: serializeOrder(order), report: reportSummary });
+    res.json({ order: serializeOrder(order), report: reportSummary, stockDeduction: stockDeductionResult });
   } catch (error) {
     console.error('Order creation failed:', error);
     res.status(500).json({ error: 'Unable to create order.', details: error.message });
@@ -362,18 +576,21 @@ app.patch('/api/production/start', authRequired, async (req, res) => {
     order.status = 'In Production';
     await order.save();
 
-    const production = await Production.findOneAndUpdate(
-      { orderId },
-      {
+    let production = await Production.findOne({ orderId });
+    if (!production) {
+      production = new Production({
+        orderId,
         status: 'In Production',
         startTime: new Date(),
-        productionHistory: [
-          ...Production.findOne({ orderId }).productionHistory,
-          { status: 'In Production', timestamp: new Date(), notes: 'Production started' }
-        ]
-      },
-      { new: true, upsert: true }
-    );
+        productionHistory: [{ status: 'In Production', timestamp: new Date(), notes: 'Production started' }]
+      });
+    } else {
+      production.status = 'In Production';
+      production.startTime = new Date();
+      production.productionHistory = production.productionHistory || [];
+      production.productionHistory.push({ status: 'In Production', timestamp: new Date(), notes: 'Production started' });
+    }
+    await production.save();
 
     res.json({ success: true, order, production });
   } catch (error) {
@@ -397,18 +614,15 @@ app.patch('/api/production/quality-check', authRequired, async (req, res) => {
     order.status = 'Quality Check';
     await order.save();
 
-    const production = await Production.findOneAndUpdate(
-      { orderId },
-      {
-        status: 'Quality Check',
-        qualityCheckStatus: qualityStatus,
-        productionHistory: [
-          ...Production.findOne({ orderId }).productionHistory,
-          { status: 'Quality Check', timestamp: new Date(), notes: `Quality check: ${qualityStatus}` }
-        ]
-      },
-      { new: true }
-    );
+    const production = await Production.findOne({ orderId });
+    if (!production) {
+      return res.status(404).json({ error: 'Production record not found.' });
+    }
+    production.status = 'Quality Check';
+    production.qualityCheckStatus = qualityStatus;
+    production.productionHistory = production.productionHistory || [];
+    production.productionHistory.push({ status: 'Quality Check', timestamp: new Date(), notes: `Quality check: ${qualityStatus}` });
+    await production.save();
 
     res.json({ success: true, order, production });
   } catch (error) {
@@ -432,17 +646,14 @@ app.patch('/api/production/ready', authRequired, async (req, res) => {
     order.status = 'Ready';
     await order.save();
 
-    const production = await Production.findOneAndUpdate(
-      { orderId },
-      {
-        status: 'Ready',
-        productionHistory: [
-          ...Production.findOne({ orderId }).productionHistory,
-          { status: 'Ready', timestamp: new Date(), notes: 'Ready for pickup' }
-        ]
-      },
-      { new: true }
-    );
+    const production = await Production.findOne({ orderId });
+    if (!production) {
+      return res.status(404).json({ error: 'Production record not found.' });
+    }
+    production.status = 'Ready';
+    production.productionHistory = production.productionHistory || [];
+    production.productionHistory.push({ status: 'Ready', timestamp: new Date(), notes: 'Ready for pickup' });
+    await production.save();
 
     res.json({ success: true, order, production });
   } catch (error) {
@@ -467,18 +678,15 @@ app.patch('/api/production/complete', authRequired, async (req, res) => {
     order.completedAt = new Date();
     await order.save();
 
-    const production = await Production.findOneAndUpdate(
-      { orderId },
-      {
-        status: 'Completed',
-        actualCompletion: new Date(),
-        productionHistory: [
-          ...Production.findOne({ orderId }).productionHistory,
-          { status: 'Completed', timestamp: new Date(), notes: 'Order completed' }
-        ]
-      },
-      { new: true }
-    );
+    const production = await Production.findOne({ orderId });
+    if (!production) {
+      return res.status(404).json({ error: 'Production record not found.' });
+    }
+    production.status = 'Completed';
+    production.actualCompletion = new Date();
+    production.productionHistory = production.productionHistory || [];
+    production.productionHistory.push({ status: 'Completed', timestamp: new Date(), notes: 'Order completed' });
+    await production.save();
 
     res.json({ success: true, order, production });
   } catch (error) {
@@ -513,18 +721,15 @@ app.patch('/api/production/delay', authRequired, async (req, res) => {
     order.status = newStatus;
     await order.save();
 
-    const production = await Production.findOneAndUpdate(
-      { orderId },
-      {
-        status: newStatus,
-        delayReason,
-        productionHistory: [
-          ...Production.findOne({ orderId }).productionHistory,
-          { status: newStatus, timestamp: new Date(), notes: `Delayed: ${delayReason}` }
-        ]
-      },
-      { new: true }
-    );
+    const production = await Production.findOne({ orderId });
+    if (!production) {
+      return res.status(404).json({ error: 'Production record not found.' });
+    }
+    production.status = newStatus;
+    production.delayReason = delayReason;
+    production.productionHistory = production.productionHistory || [];
+    production.productionHistory.push({ status: newStatus, timestamp: new Date(), notes: `Delayed: ${delayReason}` });
+    await production.save();
 
     res.json({ success: true, order, production });
   } catch (error) {
@@ -603,8 +808,21 @@ app.post('/api/auth/login', async (req, res) => {
       return res.json({ user: { id: 'admin', name: 'BM Admin', email, role: 'admin' } });
     }
 
-    const user = await User.findOne({ email, password });
+    const user = await User.findOne({ email });
     if (!user) {
+      return res.status(401).json({ error: 'Invalid email or password.' });
+    }
+
+    let match;
+    if (user.password && !user.password.startsWith('$2b$') && !user.password.startsWith('$2a$')) {
+      // Plaintext password comparison
+      match = password === user.password;
+    } else {
+      // bcrypt hash comparison
+      match = await User.findByCredentials(email, password) ? true : false;
+    }
+
+    if (!match) {
       return res.status(401).json({ error: 'Invalid email or password.' });
     }
 
@@ -721,7 +939,7 @@ app.get("/api/dashboard/summary", authRequired, async (req, res) => {
         pendingOrders: statusCounts.Pending || 0,
         completedOrders: statusCounts.Completed || 0,
         cancelledOrders: statusCounts.Cancelled || 0,
-        productionQueue: productionCounts.inProduction,
+        productionQueue: productionCounts.pending,
         inProduction: productionCounts.inProduction,
         readyForPickup: productionCounts.ready,
         topServices
@@ -848,8 +1066,22 @@ app.post('/api/customers/login', async (req, res) => {
       return res.status(400).json({ error: 'Email and password are required.' });
     }
 
-    const user = await User.findOne({ email, password });
+    const user = await User.findOne({ email });
     if (!user) {
+      return res.status(401).json({ error: 'Invalid email or password.' });
+    }
+
+    let match;
+    if (user.password && !user.password.startsWith('$2b$') && !user.password.startsWith('$2a$')) {
+      // Plaintext password comparison
+      match = password === user.password;
+    } else {
+      // bcrypt hash comparison
+      const matchCheck = await User.findByCredentials(email, password);
+      match = matchCheck ? true : false;
+    }
+
+    if (!match) {
       return res.status(401).json({ error: 'Invalid email or password.' });
     }
 
@@ -862,7 +1094,11 @@ app.post('/api/customers/login', async (req, res) => {
 
 app.get('/api/customers/profile', authRequired, async (req, res) => {
   try {
-    const user = await User.findOne({ role: 'customer' });
+    const email = req.get('x-user-email') || '';
+    if (!email) {
+      return res.status(400).json({ error: 'User email is required.' });
+    }
+    const user = await User.findOne({ email: email.toLowerCase() });
     if (!user) {
       return res.status(404).json({ error: 'Customer not found.' });
     }
@@ -1463,27 +1699,7 @@ app.patch("/api/payments/:paymentId/verify", authRequired, async (req, res) => {
   }
 });
 
-app.patch("/api/production/start", authRequired, async (req, res) => {
-  try {
-    const { orderId } = req.body || {};
-    if (!orderId) {
-      return res.status(400).json({ error: "Order ID is required." });
-    }
-
-    const order = await Order.findOne({ orderId });
-    if (!order) {
-      return res.status(404).json({ error: "Order not found." });
-    }
-
-    order.status = "In Production";
-    await order.save();
-
-    res.json({ success: true, data: { orderId: orderId, status: "In Production", startTime: new Date() } });
-  } catch (error) {
-    console.error("Production start failed:", error);
-    res.status(500).json({ error: "Unable to start production." });
-  }
-});
+// Duplicate /api/production/start removed - using the fixed version defined above
 
 
 app.post("/api/feedback", authRequired, async (req, res) => {
@@ -1642,7 +1858,7 @@ app.get("/api/bi/analytics", authRequired, async (req, res) => {
     const midPoint = Math.floor(orders.length / 2);
     const firstHalf = orders.slice(0, midPoint).reduce((sum, order) => sum + Number(order.totalAmount || 0), 0);
     const secondHalf = orders.slice(midPoint).reduce((sum, order) => sum + Number(order.totalAmount || 0), 0);
-    const orderGrowth = totalOrders > 0 ? ((secondHalf - firstHalf) / firstHalf * 100).toFixed(1) : 0;
+    const orderGrowth = totalOrders > 0 && firstHalf > 0 ? ((secondHalf - firstHalf) / firstHalf * 100).toFixed(1) : 0;
 
     res.json({
       success: true,
@@ -1703,7 +1919,7 @@ app.get("/api/security/test/idors", authRequired, async (req, res) => {
 });
 
 // Input validation test endpoint
-app.post("/api/security/test/input-validation", validateBody({ body: Joi.object({ testField: Joi.string().max(100).required() }) }), async (req, res) => {
+app.post("/api/security/test/input-validation", validateBody(Joi.object({ testField: Joi.string().max(100).required() })), async (req, res) => {
   try {
     res.json({ success: true, data: { input: req.body.testField, validation: "passed" } });
   } catch (error) {
@@ -1760,6 +1976,38 @@ app.get("/api/security/permissions", authRequired, async (req, res) => {
     res.json({ success: true, data: { userRole: userRole, permissions: userPermissions } });
   } catch (error) {
     res.status(500).json({ error: "Failed to fetch permissions." });
+  }
+});
+
+// Serve uploaded files
+app.get("/uploads/orders/:filename", async (req, res) => {
+  try {
+    const filename = path.basename(req.params.filename);
+    const filePath = path.join(__dirname, '..', 'uploads', 'orders', filename);
+
+    // Check if file exists
+    if (!fs.existsSync(filePath)) {
+      return res.status(404).json({ error: 'File not found.' });
+    }
+
+    // Determine content type based on extension
+    const ext = filename.split('.').pop().toLowerCase();
+    const contentTypes = {
+      'jpg': 'image/jpeg',
+      'jpeg': 'image/jpeg',
+      'png': 'image/png',
+      'webp': 'image/webp',
+      'pdf': 'application/pdf',
+      'svg': 'image/svg+xml'
+    };
+    const contentType = contentTypes[ext] || 'application/octet-stream';
+
+    res.setHeader('Content-Type', contentType);
+    res.setHeader('Content-Disposition', `inline; filename="${filename}"`);
+    res.sendFile(filePath);
+  } catch (error) {
+    console.error('File serving failed:', error);
+    res.status(500).json({ error: 'Unable to serve file.' });
   }
 });
 

@@ -26,7 +26,9 @@ const productSchema = new mongoose.Schema(
     description: { type: String, default: '' },
     minQty: { type: Number, default: 1 },
     category: { type: String, default: 'Printing' },
-    active: { type: Boolean, default: true }
+    active: { type: Boolean, default: true },
+    stock: { type: Number, default: 0 },
+    lowStockThreshold: { type: Number, default: 10 }
   },
   { timestamps: true }
 );
@@ -92,6 +94,11 @@ const orderSchema = new mongoose.Schema(
     paymentMethod: { type: String, default: '' },
     status: { type: String, enum: ['Pending', 'Quoted', 'Confirmed', 'Payment Pending', 'Paid', 'Queued', 'In Production', 'Quality Check', 'Ready', 'Completed', 'Cancelled'], default: 'Pending' },
     notes: { type: String, default: '' },
+    designNotes: { type: String, default: '' },
+    designFilePath: { type: String, default: '' },
+    designFileName: { type: String, default: '' },
+    designFileType: { type: String, default: '' },
+    designFileSize: { type: Number, default: 0 },
     createdAt: { type: Date, default: Date.now },
     completedAt: { type: Date, default: null }
   },
@@ -127,7 +134,7 @@ orderSchema.methods.serialize = function() {
     productId: firstItem.productId || null,
     quantity: firstItem.quantity || 0,
     specs: this.notes || '',
-    design: '',
+    design: this.designNotes || '',
     payment: this.paymentMethod,
     total: this.totalAmount,
     status: this.status,
@@ -135,7 +142,11 @@ orderSchema.methods.serialize = function() {
     notes: this.notes,
     userId: this.customerId,
     createdAt: this.createdAt,
-    items: this.items || []
+    items: this.items || [],
+    designFilePath: this.designFilePath,
+    designFileName: this.designFileName,
+    designFileType: this.designFileType,
+    designFileSize: this.designFileSize
   };
 };
 

@@ -18,7 +18,7 @@ export const RegisterPage = ({ setPage, onLogin, showToast: notify }) => {
   };
 
   const register = async () => {
-    if (!form.name || !form.email || !form.phone || !form.password) {
+    if (!form.name || !form.email || !form.password) {
       notify?.('Please complete all required fields.', 'error');
       return;
     }

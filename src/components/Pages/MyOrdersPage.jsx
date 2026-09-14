@@ -6,6 +6,7 @@ import { Btn } from "../Common/Btn";
 import { Badge } from "../Common/Badge";
 import { Input } from "../Common/Input";
 import { Modal } from "../Common/Modal";
+import { v4 as uuidv4 } from "uuid";
 
 export const MyOrdersPage = ({ orders, user, setPage, showToast }) => {
   const [reviewModal, setReviewModal] = useState(null);
@@ -72,7 +73,7 @@ export const MyOrdersPage = ({ orders, user, setPage, showToast }) => {
         </Card>
       ) : (
         <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-          {myOrders.map(o => (
+{myOrders.map(o => (
             <Card key={o.id}>
               <div
                 style={{
@@ -114,6 +115,40 @@ export const MyOrdersPage = ({ orders, user, setPage, showToast }) => {
                     >
                       {o.specs.slice(0, 80)}
                       {o.specs.length > 80 && "..."}
+                    </div>
+                  )}
+                  {o.designNotes && (
+                    <div
+                      style={{
+                        marginTop: 4,
+                        fontSize: 12,
+                        color: C.gray600,
+                        fontStyle: "italic"
+                      }}
+                    >
+                      📝 {o.designNotes.slice(0, 100)}{o.designNotes.length > 100 && "..."}
+                    </div>
+                  )}
+                  {o.designFileName && (
+                    <div style={{ marginTop: 6 }}>
+                      <div style={{ fontSize: 12, color: C.gray600 }}>
+                        📎 {o.designFileName}
+                      </div>
+                      {o.designFileType && o.designFileType.startsWith('image') && (
+                        <img
+                          src={o.designFilePath ? `/uploads/orders/${o.designFilePath.split('/').pop()}` : ''}
+                          alt="Design preview"
+                          style={{ width: 80, height: 60, objectFit: 'contain', borderRadius: 4, marginTop: 4 }}
+                        />
+                      )}
+                      {o.designFilePath && !o.designFileType.startsWith('image') && (
+                        <a
+                          href={`/uploads/orders/${o.designFilePath.split('/').pop()}`}
+                          style={{ color: C.blue, fontSize: 12, textDecoration: 'underline' }}
+                        >
+                          View/Download
+                        </a>
+                      )}
                     </div>
                   )}
                 </div>

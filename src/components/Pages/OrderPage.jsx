@@ -1,10 +1,19 @@
-import { useState } from "react";
+import { useState, useRef } from "react";
 import { C } from "../../constants/colors";
 import { PRODUCTS, PAYMENT_METHODS, STATUS_LIST } from "../../constants/products";
 import { generateId } from "../../utils/helpers";
 import { Card } from "../Common/Card";
 import { Btn } from "../Common/Btn";
 import { Input } from "../Common/Input";
+
+const fileToBase64 = (file) => {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.readAsDataURL(file);
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = reject;
+  });
+};
 
 export const OrderPage = ({ user, selectedProduct, setPage, addOrder, showToast }) => {
   const [step, setStep] = useState(1);
@@ -22,11 +31,63 @@ export const OrderPage = ({ user, selectedProduct, setPage, addOrder, showToast 
     notes: ""
   });
   const [submitted, setSubmitted] = useState(null);
+  const [selectedFile, setSelectedFile] = useState(null);
+  const [fileError, setFileError] = useState("");
+  const fileInputRef = useRef(null);
+
   const product =
     PRODUCTS.find(p => p.id === Number(form.productId)) ||
     (form.productId ? PRODUCTS.find(p => p.name === form.productId) : null);
   const total = product ? product.price * Number(form.quantity) : 0;
   const f = (k, v) => setForm(prev => ({ ...prev, [k]: v }));
+
+  const handleFileChange = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) {
+      setSelectedFile(null);
+      setFileError("");
+      return;
+    }
+
+    // Client-side type check
+    const allowedTypes = ["image/jpeg", "image/png", "image/webp", "application/pdf", "image/svg+xml"];
+    const maxSize = 10 * 1024 * 1024; // 10MB
+
+    if (!allowedTypes.includes(file.type) && !file.name.match(/\.(jpe?g|png|webp|pdf|svg)$/i)) {
+      setFileError("Invalid file type. Please upload JPG, PNG, WEBP, PDF, or SVG.");
+      setSelectedFile(null);
+      return;
+    }
+
+    if (file.size > maxSize) {
+      setFileError("File is too large. Maximum file size is 10 MB.");
+      setSelectedFile(null);
+      return;
+    }
+
+    try {
+      const base64 = await fileToBase64(file);
+      setFileError("");
+      setSelectedFile({
+        file,
+        base64,
+        name: file.name,
+        type: file.type,
+        size: file.size
+      });
+    } catch (error) {
+      setFileError("Failed to read file.");
+      setSelectedFile(null);
+    }
+  };
+
+  const clearFile = () => {
+    setSelectedFile(null);
+    setFileError("");
+    if (fileInputRef.current) {
+      fileInputRef.current.value = "";
+    }
+  };
 
   const handleSubmit = async () => {
     if (!form.name || !form.email || !form.phone || !product || !form.paymentMethod) {
@@ -34,6 +95,15 @@ export const OrderPage = ({ user, selectedProduct, setPage, addOrder, showToast 
       return;
     }
     setLoading(true);
+    let designFileData = null;
+    if (selectedFile && selectedFile.base64) {
+      designFileData = {
+        base64: selectedFile.base64.replace(/^data:[^;]+;base64,/, ''),
+        originalName: selectedFile.name,
+        fileType: selectedFile.type,
+        fileSize: selectedFile.size
+      };
+    }
     const order = {
       id: "ORD-" + generateId(),
       customer: form.name,
@@ -53,7 +123,8 @@ export const OrderPage = ({ user, selectedProduct, setPage, addOrder, showToast 
       date: new Date().toISOString().split("T")[0],
       notes: form.notes,
       userId: user?.id,
-      createdAt: Date.now()
+      createdAt: Date.now(),
+      designFile: designFileData
     };
     const createdOrder = await addOrder(order);
     setSubmitted(createdOrder || order);
@@ -420,6 +491,69 @@ export const OrderPage = ({ user, selectedProduct, setPage, addOrder, showToast 
               placeholder="Will email via JPG, Canva link, etc."
               rows={3}
             />
+
+            {selectedFile && selectedFile.file && (
+              <div style={{ marginTop: 12 }}>
+                <div style={{ fontSize: 12, color: C.gray600 }}>
+                  Selected: {selectedFile.name}
+                </div>
+                {selectedFile.type.startsWith("image/") && (
+                  <div style={{ textAlign: "center", margin: "8px 0" }}>
+                    <img
+                      src={selectedFile.base64}
+                      alt="Preview"
+                      style={{
+                        maxWidth: 120,
+                        maxHeight: 120,
+                        borderRadius: 4,
+                        objectFit: "contain"
+                      }}
+                    />
+                  </div>
+                )}
+                <div style={{ fontSize: 12, color: C.gray600 }}>
+                  File Size: {(selectedFile.size / 1024 / 1024).toFixed(1)} MB
+                </div>
+                <button
+                  onClick={clearFile}
+                  style={{
+                    marginTop: 4,
+                    background: "none",
+                    border: "1px solid #dc3545",
+                    color: "#dc3545",
+                    padding: "4px 8px",
+                    borderRadius: 4,
+                    fontSize: 12,
+                    cursor: "pointer"
+                  }}
+                >
+                  Remove File
+                </button>
+              </div>
+            )}
+
+            {fileError && (
+              <div style={{ marginTop: 8, color: "#dc3545", fontSize: 12 }}>
+                {fileError}
+              </div>
+            )}
+
+            <input
+              type="file"
+              accept=".jpg,.jpeg,.png,.webp,.pdf,.svg"
+              onChange={handleFileChange}
+              style={{ display: "none" }}
+              ref={fileInputRef}
+            />
+            <Btn
+              variant="ghost"
+              size="sm"
+              style={{ marginTop: 4 }}
+              onClick={() => fileInputRef.current?.click()}
+            >
+              Upload File
+            </Btn>
+
             <div style={{ display: "flex", justifyContent: "space-between" }}>
               <Btn variant="ghost" onClick={() => setStep(1)}>
                 ← Back

@@ -13,7 +13,7 @@ import { ProfilePage } from "./components/Pages/ProfilePage";
 import { ContactPage } from "./components/Pages/ContactPage";
 import { LoginPage } from "./components/Pages/LoginPage";
 import { RegisterPage } from "./components/Pages/RegisterPage";
-import { AdminPanel } from "./components/Pages/AdminPanel";
+import AdminPanel from "./components/Pages/AdminPanel";
 import { Toast } from "./components/Common/Toast";
 import { Spinner } from "./components/Common/Spinner";
 import { BMLogo } from "./components/Common/BMLogo";

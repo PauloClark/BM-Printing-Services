@@ -171,6 +171,42 @@ export const TrackPage = ({ orders, user }) => {
               <strong>Specs:</strong> {found.specs}
             </div>
           )}
+          {found.designNotes && (
+            <div
+              style={{
+                marginTop: 8,
+                fontSize: 12,
+                color: C.gray600,
+                fontStyle: "italic"
+              }}
+            >
+              📝 {found.designNotes.slice(0, 100)}{found.designNotes.length > 100 && "..."}
+            </div>
+          )}
+          {found.designFileName && (
+            <div style={{ marginTop: 8 }}>
+              <div style={{ fontSize: 12, color: C.gray600 }}>
+                📎 {found.designFileName}
+              </div>
+              {found.designFileType && found.designFileType.startsWith('image') && (
+                <img
+                  src={found.designFilePath ? `/uploads/orders/${found.designFilePath.split('/').pop()}` : ''}
+                  alt="Design preview"
+                  style={{ width: 80, height: 60, objectFit: 'contain', borderRadius: 4, marginTop: 4 }}
+                />
+              )}
+              {found.designFilePath && !found.designFileType.startsWith('image') && (
+                <a
+                  href={`/uploads/orders/${found.designFilePath.split('/').pop()}`}
+                  target="_blank"
+                  rel="noopener"
+                  style={{ color: C.blue, fontSize: 12, textDecoration: 'underline' }}
+                >
+                  View/Download
+                </a>
+              )}
+            </div>
+          )}
         </Card>
       )}
 
