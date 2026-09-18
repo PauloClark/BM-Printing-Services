@@ -3,6 +3,7 @@ import cors from 'cors';
 import dotenv from 'dotenv';
 import path from 'path';
 import fs from 'fs';
+import bcrypt from 'bcryptjs';
 import Joi from 'joi';
 import { fileURLToPath } from 'url';
 import { connectMongo, seedCatalogAndAdmin, User, Product, Order, Inventory, Production, OrderFile } from './server/db.js';
@@ -177,10 +178,38 @@ function uploadProductImage(fileData) {
   };
 }
 
+app.post('/api/products', requireAdmin, async (req, res) => {
+  try {
+    const { name, description, price, category, lowStockThreshold, status, stock, image } = req.body || {};
+    if (!name) return res.status(400).json({ error: 'Product name is required.' });
+
+    const maxProduct = await Product.findOne({}).sort({ id: -1 });
+    const nextId = (maxProduct?.id || 0) + 1;
+
+    const product = await Product.create({
+      id: nextId,
+      name,
+      price: Number(price || 0),
+      description: description || '',
+      category: category || 'Printing',
+      stock: stock !== undefined ? Number(stock) : 0,
+      lowStockThreshold: lowStockThreshold !== undefined ? Number(lowStockThreshold) : 10,
+      status: status || 'Active',
+      active: true,
+      image: image || ''
+    });
+
+    res.json({ success: true, product });
+  } catch (error) {
+    console.error('Product create failed:', error);
+    res.status(500).json({ error: 'Unable to create product.' });
+  }
+});
+
 app.patch('/api/products/:id', requireAdmin, async (req, res) => {
   try {
     const productId = safeText(req.params.id);
-    const { name, description, price, category, lowStockThreshold, status, stock, image } = req.body || {};
+    const { name, description, price, category, lowStockThreshold, status, stock, image, active } = req.body || {};
 
     const updateData = {};
     if (name !== undefined) updateData.name = name;
@@ -190,6 +219,7 @@ app.patch('/api/products/:id', requireAdmin, async (req, res) => {
     if (lowStockThreshold !== undefined) updateData.lowStockThreshold = lowStockThreshold;
     if (stock !== undefined) updateData.stock = stock;
     if (image !== undefined) updateData.image = image;
+    if (active !== undefined) updateData.active = active;
 
     let product = await Product.findOne({ id: Number(productId) });
     if (product) {
@@ -213,6 +243,19 @@ app.patch('/api/products/:id', requireAdmin, async (req, res) => {
   } catch (error) {
     console.error('Product edit failed:', error);
     res.status(500).json({ error: 'Unable to edit product.' });
+  }
+});
+
+app.delete('/api/products/:id', requireAdmin, async (req, res) => {
+  try {
+    const productId = safeText(req.params.id);
+    const product = await Product.findOne({ id: Number(productId) });
+    if (!product) return res.status(404).json({ error: 'Product not found.' });
+    await Product.deleteOne({ id: Number(productId) });
+    res.json({ success: true, message: 'Product deleted.' });
+  } catch (error) {
+    console.error('Product delete failed:', error);
+    res.status(500).json({ error: 'Unable to delete product.' });
   }
 });
 
@@ -818,8 +861,8 @@ app.post('/api/auth/login', async (req, res) => {
       // Plaintext password comparison
       match = password === user.password;
     } else {
-      // bcrypt hash comparison
-      match = await User.findByCredentials(email, password) ? true : false;
+      // bcrypt hash comparison (for accounts with hashed passwords)
+      match = await bcrypt.compare(password, user.password);
     }
 
     if (!match) {
@@ -1076,9 +1119,8 @@ app.post('/api/customers/login', async (req, res) => {
       // Plaintext password comparison
       match = password === user.password;
     } else {
-      // bcrypt hash comparison
-      const matchCheck = await User.findByCredentials(email, password);
-      match = matchCheck ? true : false;
+      // bcrypt hash comparison (for accounts with hashed passwords)
+      match = await bcrypt.compare(password, user.password);
     }
 
     if (!match) {

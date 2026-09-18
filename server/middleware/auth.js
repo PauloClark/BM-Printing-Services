@@ -1,4 +1,5 @@
-import User from '../db.js';
+import { User } from '../db.js';
+import bcrypt from 'bcryptjs';
 
 // Authentication gate - verifies user is logged in
 export const requireAuth = async (req, res, next) => {

@@ -15,12 +15,12 @@ export const LoginPage = ({ setPage, onLogin, showToast }) => {
         body: JSON.stringify({ email, password: pass })
       });
 
+      const data = await response.json().catch(() => ({}));
+
       if (!response.ok) {
-        const errorText = await response.text();
-        throw new Error(errorText || 'Invalid email or password.');
+        throw new Error(data.error || 'Invalid email or password.');
       }
 
-      const data = await response.json();
       if (!data.user) {
         throw new Error(data.error || 'Invalid email or password.');
       }

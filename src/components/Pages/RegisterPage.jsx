@@ -41,12 +41,12 @@ export const RegisterPage = ({ setPage, onLogin, showToast: notify }) => {
         })
       });
 
+      const data = await response.json().catch(() => ({}));
+
       if (!response.ok) {
-        const errorText = await response.text();
-        throw new Error(errorText || 'Unable to create account.');
+        throw new Error(data.error || 'Unable to create account.');
       }
 
-      const data = await response.json();
       if (!data.user) {
         throw new Error(data.error || 'Unable to create account.');
       }
