@@ -1,8 +1,9 @@
 import mongoose from 'mongoose';
+import bcrypt from 'bcryptjs';
 import { MongoMemoryServer } from 'mongodb-memory-server';
 
-const DEFAULT_ADMIN_EMAIL = 'admin@bm.com';
-const DEFAULT_ADMIN_PASSWORD = 'admin123';
+const DEFAULT_ADMIN_EMAIL = process.env.ADMIN_EMAIL || 'admin@bm.com';
+const DEFAULT_ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'admin123';
 
 const userSchema = new mongoose.Schema(
   {
@@ -121,6 +122,24 @@ const orderFileSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
+const auditLogSchema = new mongoose.Schema(
+  {
+    userId: { type: String, default: '' },
+    userName: { type: String, default: '' },
+    role: { type: String, default: '' },
+    action: { type: String, required: true },
+    module: { type: String, default: '' },
+    resourceType: { type: String, default: '' },
+    resourceId: { type: String, default: '' },
+    previousValue: { type: mongoose.Schema.Types.Mixed, default: null },
+    newValue: { type: mongoose.Schema.Types.Mixed, default: null },
+    result: { type: String, default: 'Success' },
+    metadata: { type: mongoose.Schema.Types.Mixed, default: {} },
+    timestamp: { type: Date, default: Date.now }
+  },
+  { timestamps: true }
+);
+
 orderSchema.methods.serialize = function() {
   const firstItem = this.items?.[0] || {};
   return {
@@ -185,11 +204,16 @@ orderSchema.methods.canTransitionTo = function(newStatus) {
 };
 
 userSchema.statics.findByCredentials = async function(email, password) {
-  const user = await this.findOne({ email });
+  const user = await this.findOne({ email: email.toLowerCase() });
   if (!user) {
     throw new Error('Invalid login credentials');
   }
-  if (user.password !== password) {
+  if (!user.password || (!user.password.startsWith('$2b$') && !user.password.startsWith('$2a$'))) {
+    throw new Error('Account needs password reset. Please contact admin.');
+  }
+  const bcrypt = (await import('bcryptjs')).default;
+  const match = await bcrypt.compare(password, user.password);
+  if (!match) {
     throw new Error('Invalid login credentials');
   }
   return user;
@@ -221,6 +245,7 @@ const Inventory = mongoose.model('Inventory', inventorySchema);
 const Production = mongoose.model('Production', productionSchema);
 const Order = mongoose.model('Order', orderSchema);
 const OrderFile = mongoose.model('OrderFile', orderFileSchema);
+const AuditLog = mongoose.model('AuditLog', auditLogSchema);
 
 export async function connectMongo() {
   const uri = process.env.MONGODB_URI || 'mongodb://127.0.0.1:27017/bmprinting';
@@ -240,7 +265,23 @@ export async function connectMongo() {
 }
 
 export async function seedCatalogAndAdmin() {
-  // compatibility stub
+  try {
+    const existingAdmin = await User.findOne({ email: DEFAULT_ADMIN_EMAIL });
+    if (!existingAdmin) {
+      const hashedPassword = await bcrypt.hash(DEFAULT_ADMIN_PASSWORD, 10);
+      await User.create({
+        id: 'admin-001',
+        name: 'BM Admin',
+        email: DEFAULT_ADMIN_EMAIL,
+        phone: '',
+        password: hashedPassword,
+        role: 'admin'
+      });
+      console.log('Default admin account created.');
+    }
+  } catch (error) {
+    console.error('Failed to seed admin account:', error.message);
+  }
 }
 
-export { User, Product, Order, Inventory, Production, OrderFile, DEFAULT_ADMIN_EMAIL, DEFAULT_ADMIN_PASSWORD };
+export { User, Product, Order, Inventory, Production, OrderFile, AuditLog, DEFAULT_ADMIN_EMAIL, DEFAULT_ADMIN_PASSWORD };

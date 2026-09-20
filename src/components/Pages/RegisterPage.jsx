@@ -51,8 +51,8 @@ export const RegisterPage = ({ setPage, onLogin, showToast: notify }) => {
         throw new Error(data.error || 'Unable to create account.');
       }
 
-      await store.set('session', data.user);
-      onLogin?.(data.user);
+      await store.set('session', { ...data.user, token: data.token });
+      onLogin?.({ ...data.user, token: data.token });
       notify?.('Account created successfully.', 'success');
       setPage?.('home');
     } catch (error) {

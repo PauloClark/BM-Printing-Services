@@ -35,7 +35,7 @@ export const OrderPage = ({ user, selectedProduct, setPage, addOrder, showToast 
   const [fileError, setFileError] = useState("");
   const fileInputRef = useRef(null);
 
-  const product =
+  const product = selectedProduct ||
     PRODUCTS.find(p => p.id === Number(form.productId)) ||
     (form.productId ? PRODUCTS.find(p => p.name === form.productId) : null);
   const total = product ? product.price * Number(form.quantity) : 0;

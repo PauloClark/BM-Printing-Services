@@ -26,8 +26,9 @@ export const LoginPage = ({ setPage, onLogin, showToast }) => {
       }
 
       const user = data.user;
-      await store.set('session', user);
-      onLogin?.(user);
+      const token = data.token;
+      await store.set('session', { ...user, token });
+      onLogin?.({ ...user, token });
       showToast?.('Logged in successfully.', 'success');
       setPage?.('home');
     } catch (error) {
@@ -177,7 +178,7 @@ export const LoginPage = ({ setPage, onLogin, showToast }) => {
         </div>
 
         <div style={{ marginTop: 18, fontSize: 12, color: '#777' }}>
-          Admin demo: <span style={{ fontWeight: 600 }}>admin@bm.com</span> / <span style={{ fontWeight: 600 }}>admin123</span>
+          Admin access requires an admin account registered in the system.
         </div>
       </div>
     </div>

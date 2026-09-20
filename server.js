@@ -5,9 +5,12 @@ import path from 'path';
 import fs from 'fs';
 import bcrypt from 'bcryptjs';
 import Joi from 'joi';
+import mongoose from 'mongoose';
 import { fileURLToPath } from 'url';
-import { connectMongo, seedCatalogAndAdmin, User, Product, Order, Inventory, Production, OrderFile } from './server/db.js';
+import { connectMongo, seedCatalogAndAdmin, User, Product, Order, Inventory, Production, OrderFile, AuditLog } from './server/db.js';
 import { generateDailyReport, getDefaultReportDate, getReportSummary, readReportFile, formatCurrency } from './server/reportService.js';
+import { generateToken, requireAuth, requireAdmin, optionalAuth } from './server/middleware/auth.js';
+import rateLimit from 'express-rate-limit';
 
 
 dotenv.config();
@@ -22,6 +25,14 @@ app.use(cors({ origin: FRONTEND_ORIGINS, credentials: true }));
 function safeText(value) {
   return typeof value === 'string' ? value : '';
 }
+
+const authLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 20,
+  message: { error: 'Too many attempts, please try again later.' },
+  standardHeaders: true,
+  legacyHeaders: false
+});
 
 function uploadDesignFile(fileData) {
   // If no file data, return null
@@ -50,7 +61,7 @@ function uploadDesignFile(fileData) {
   // Generate unique filename
   const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
   const fileName = `${safeText(fileData.customerId)}-${uniqueSuffix}.${ext}`;
-  const uploadDir = path.join(__dirname, '..', 'uploads', 'orders');
+  const uploadDir = path.join(__dirname, 'uploads', 'orders');
   const filePath = path.join(uploadDir, fileName);
 
   // Ensure directory exists
@@ -96,24 +107,16 @@ function serializeOrder(order) {
   };
 }
 
-function requireAdmin(req, res, next) {
-  const role = req.get('x-user-role') || req.get('x-admin-role') || req.body?.userRole;
-  if (role !== 'admin') {
-    return res.status(403).json({ error: 'Admin access required.' });
-  }
-  next();
-}
-
-function authRequired(req, res, next) {
-  const role = req.get('x-user-role') || req.get('x-admin-role') || req.body?.userRole;
-  if (!role) {
-    return res.status(401).json({ error: 'Authentication required.' });
-  }
-  next();
-}
+// Auth middleware now imported from ./server/middleware/auth.js (JWT-based)
+// requireAdmin and requireAuth are real implementations using JWT tokens
 
 app.get('/api/health', async (req, res) => {
-  res.json({ status: 'ok', db: 'connected' });
+  let dbStatus = 'disconnected';
+  try {
+    const state = mongoose.connection.readyState;
+    dbStatus = state === 1 ? 'connected' : state === 2 ? 'connecting' : 'disconnected';
+  } catch {}
+  res.json({ status: dbStatus === 'connected' ? 'ok' : 'degraded', db: dbStatus, timestamp: new Date() });
 });
 
 app.get('/api/products', async (req, res) => {
@@ -157,7 +160,7 @@ function uploadProductImage(fileData) {
   // Generate unique filename
   const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
   const fileName = `${Date.now()}-${Math.round(Math.random() * 1E9)}.${ext}`;
-  const uploadDir = path.join(__dirname, '..', 'uploads', 'products');
+  const uploadDir = path.join(__dirname, 'uploads', 'products');
   const filePath = path.join(uploadDir, fileName);
 
   // Ensure directory exists
@@ -425,10 +428,26 @@ app.patch('/api/orders/:orderId/status', requireAdmin, async (req, res) => {
       return res.status(400).json({ error: 'Status is required.' });
     }
 
-    const order = await Order.findOneAndUpdate({ orderId }, { status }, { new: true });
+    const allowedStatuses = ['Pending', 'Quoted', 'Confirmed', 'Payment Pending', 'Paid', 'Queued', 'In Production', 'Quality Check', 'Ready', 'Completed', 'Cancelled'];
+    if (!allowedStatuses.includes(status)) {
+      return res.status(400).json({ error: 'Invalid status value.' });
+    }
+
+    const order = await Order.findOne({ orderId });
     if (!order) {
       return res.status(404).json({ error: 'Order not found.' });
     }
+
+    if (order.status === 'Completed' || order.status === 'Cancelled') {
+      return res.status(400).json({ error: 'Cannot modify a finalized order.' });
+    }
+
+    if (!order.canTransitionTo(status)) {
+      return res.status(400).json({ error: `Cannot transition from '${order.status}' to '${status}'.` });
+    }
+
+    order.status = status;
+    await order.save();
 
     const reportDate = getDefaultReportDate();
     await generateDailyReport(reportDate, { regenerate: false });
@@ -458,7 +477,7 @@ app.delete('/api/orders/:orderId', requireAdmin, async (req, res) => {
 
 // ─── INVENTORY MANAGEMENT ───────────────────────────────────────────────
 
-app.post('/api/inventory/stock-in', authRequired, async (req, res) => {
+app.post('/api/inventory/stock-in', requireAuth, async (req, res) => {
   try {
     const { material, quantity, supplier, notes } = req.body || {};
     if (!material || quantity === undefined || quantity === null) {
@@ -494,7 +513,7 @@ app.post('/api/inventory/stock-in', authRequired, async (req, res) => {
   }
 });
 
-app.post('/api/inventory/stock-out', authRequired, async (req, res) => {
+app.post('/api/inventory/stock-out', requireAuth, async (req, res) => {
   try {
     const { material, quantity, notes } = req.body || {};
     if (!material || quantity === undefined || quantity === null) {
@@ -525,7 +544,7 @@ app.post('/api/inventory/stock-out', authRequired, async (req, res) => {
   }
 });
 
-app.get('/api/inventory', authRequired, async (req, res) => {
+app.get('/api/inventory', requireAuth, async (req, res) => {
   try {
     const inventory = await Inventory.find({}).sort({ material: 1 });
     res.json({ success: true, inventory });
@@ -535,7 +554,7 @@ app.get('/api/inventory', authRequired, async (req, res) => {
   }
 });
 
-app.patch('/api/inventory/adjust', authRequired, async (req, res) => {
+app.patch('/api/inventory/adjust', requireAuth, async (req, res) => {
   try {
     const { material, quantity, notes } = req.body || {};
     if (!material || quantity === undefined) {
@@ -562,7 +581,7 @@ app.patch('/api/inventory/adjust', authRequired, async (req, res) => {
   }
 });
 
-app.get('/api/inventory/low-stock', authRequired, async (req, res) => {
+app.get('/api/inventory/low-stock', requireAuth, async (req, res) => {
   try {
     const allInventory = await Inventory.find({}).sort({ material: 1 });
     const lowStock = allInventory.filter(i => i.quantity < i.minimumStockLevel);
@@ -575,7 +594,7 @@ app.get('/api/inventory/low-stock', authRequired, async (req, res) => {
 
 // ─── PRODUCTION MANAGEMENT ──────────────────────────────────────────────
 
-app.post('/api/production/queue', authRequired, async (req, res) => {
+app.post('/api/production/queue', requireAuth, async (req, res) => {
   try {
     const { orderId, priority } = req.body || {};
     if (!orderId) {
@@ -604,7 +623,7 @@ app.post('/api/production/queue', authRequired, async (req, res) => {
   }
 });
 
-app.patch('/api/production/start', authRequired, async (req, res) => {
+app.patch('/api/production/start', requireAuth, async (req, res) => {
   try {
     const { orderId } = req.body || {};
     if (!orderId) {
@@ -642,7 +661,7 @@ app.patch('/api/production/start', authRequired, async (req, res) => {
   }
 });
 
-app.patch('/api/production/quality-check', authRequired, async (req, res) => {
+app.patch('/api/production/quality-check', requireAuth, async (req, res) => {
   try {
     const { orderId, qualityStatus } = req.body || {};
     if (!orderId || !qualityStatus) {
@@ -674,7 +693,7 @@ app.patch('/api/production/quality-check', authRequired, async (req, res) => {
   }
 });
 
-app.patch('/api/production/ready', authRequired, async (req, res) => {
+app.patch('/api/production/ready', requireAuth, async (req, res) => {
   try {
     const { orderId } = req.body || {};
     if (!orderId) {
@@ -705,7 +724,7 @@ app.patch('/api/production/ready', authRequired, async (req, res) => {
   }
 });
 
-app.patch('/api/production/complete', authRequired, async (req, res) => {
+app.patch('/api/production/complete', requireAuth, async (req, res) => {
   try {
     const { orderId } = req.body || {};
     if (!orderId) {
@@ -738,7 +757,7 @@ app.patch('/api/production/complete', authRequired, async (req, res) => {
   }
 });
 
-app.patch('/api/production/delay', authRequired, async (req, res) => {
+app.patch('/api/production/delay', requireAuth, async (req, res) => {
   try {
     const { orderId, delayReason } = req.body || {};
     if (!orderId) {
@@ -750,28 +769,17 @@ app.patch('/api/production/delay', authRequired, async (req, res) => {
       return res.status(404).json({ error: 'Order not found.' });
     }
 
-    const currentStatus = order.status;
-    let newStatus = currentStatus;
-    const statusMap = {
-      'In Production': 'Quality Check',
-      'Quality Check': 'Ready',
-      'Ready': 'Completed',
-      'Pending': 'Pending',
-      'Queued': 'Queued'
-    };
-    newStatus = statusMap[currentStatus] || currentStatus;
-
-    order.status = newStatus;
+    order.status = 'In Production';
     await order.save();
 
     const production = await Production.findOne({ orderId });
     if (!production) {
       return res.status(404).json({ error: 'Production record not found.' });
     }
-    production.status = newStatus;
-    production.delayReason = delayReason;
+    production.status = 'Delayed';
+    production.delayReason = delayReason || 'Unspecified delay';
     production.productionHistory = production.productionHistory || [];
-    production.productionHistory.push({ status: newStatus, timestamp: new Date(), notes: `Delayed: ${delayReason}` });
+    production.productionHistory.push({ status: 'Delayed', timestamp: new Date(), notes: `Delayed: ${delayReason || 'Unspecified'}` });
     await production.save();
 
     res.json({ success: true, order, production });
@@ -781,7 +789,7 @@ app.patch('/api/production/delay', authRequired, async (req, res) => {
   }
 });
 
-app.get('/api/production/:orderId', authRequired, async (req, res) => {
+app.get('/api/production/:orderId', requireAuth, async (req, res) => {
   try {
     const { orderId } = req.params;
     const production = await Production.findOne({ orderId });
@@ -798,7 +806,7 @@ app.get('/api/production/:orderId', authRequired, async (req, res) => {
   }
 });
 
-app.get('/api/production', authRequired, async (req, res) => {
+app.get('/api/production', requireAuth, async (req, res) => {
   try {
     const productions = await Production.find({}).sort({ 'startTime': -1 });
     res.json({ success: true, productions });
@@ -808,7 +816,7 @@ app.get('/api/production', authRequired, async (req, res) => {
   }
 });
 
-app.post('/api/auth/register', async (req, res) => {
+app.post('/api/auth/register', authLimiter, async (req, res) => {
   try {
     const body = req.body || {};
     const email = safeText(body.email).toLowerCase();
@@ -820,35 +828,41 @@ app.post('/api/auth/register', async (req, res) => {
       return res.status(400).json({ error: 'Name, email, and password are required.' });
     }
 
+    if (password.length < 6) {
+      return res.status(400).json({ error: 'Password must be at least 6 characters.' });
+    }
+
     const existing = await User.findOne({ email });
     if (existing) {
       return res.status(409).json({ error: 'Email already registered.' });
     }
 
+    const hashedPassword = await bcrypt.hash(password, 10);
     const user = await User.create({
       id: `user-${Date.now()}`,
       name,
       email,
       phone,
-      password,
+      password: hashedPassword,
       role: 'customer'
     });
 
-    res.json({ user: { id: user.id, name: user.name, email: user.email, phone: user.phone, role: user.role } });
+    const token = generateToken(user);
+    res.json({ user: { id: user.id, name: user.name, email: user.email, phone: user.phone, role: user.role }, token });
   } catch (error) {
     console.error('Register failed:', error);
     res.status(500).json({ error: 'Unable to register user.' });
   }
 });
 
-app.post('/api/auth/login', async (req, res) => {
+app.post('/api/auth/login', authLimiter, async (req, res) => {
   try {
     const body = req.body || {};
     const email = safeText(body.email).toLowerCase();
     const password = safeText(body.password);
 
-    if (email === 'admin@bm.com' && password === 'admin123') {
-      return res.json({ user: { id: 'admin', name: 'BM Admin', email, role: 'admin' } });
+    if (!email || !password) {
+      return res.status(400).json({ error: 'Email and password are required.' });
     }
 
     const user = await User.findOne({ email });
@@ -856,12 +870,8 @@ app.post('/api/auth/login', async (req, res) => {
       return res.status(401).json({ error: 'Invalid email or password.' });
     }
 
-    let match;
-    if (user.password && !user.password.startsWith('$2b$') && !user.password.startsWith('$2a$')) {
-      // Plaintext password comparison
-      match = password === user.password;
-    } else {
-      // bcrypt hash comparison (for accounts with hashed passwords)
+    let match = false;
+    if (user.password && (user.password.startsWith('$2b$') || user.password.startsWith('$2a$'))) {
       match = await bcrypt.compare(password, user.password);
     }
 
@@ -869,7 +879,8 @@ app.post('/api/auth/login', async (req, res) => {
       return res.status(401).json({ error: 'Invalid email or password.' });
     }
 
-    res.json({ user: { id: user.id, name: user.name, email: user.email, phone: user.phone, role: user.role } });
+    const token = generateToken(user);
+    res.json({ user: { id: user.id, name: user.name, email: user.email, phone: user.phone, role: user.role }, token });
   } catch (error) {
     console.error('Login failed:', error);
     res.status(500).json({ error: 'Unable to log in.' });
@@ -922,7 +933,7 @@ app.get('/api/admin/reports/currency', requireAdmin, async (req, res) => {
 
 // ─── DASHBOARD ROUTES ─────────────────────────────────────────────────────
 
-app.get("/api/dashboard/summary", authRequired, async (req, res) => {
+app.get("/api/dashboard/summary", requireAuth, async (req, res) => {
   try {
     const orders = await Order.find({}).sort({ createdAt: -1 });
 
@@ -997,7 +1008,7 @@ app.get("/api/dashboard/summary", authRequired, async (req, res) => {
   }
 });
 
-app.get("/api/ai/daily-summary", authRequired, async (req, res) => {
+app.get("/api/ai/daily-summary", requireAuth, async (req, res) => {
   try {
     const today = new Date();
     const dateString = today.getFullYear() + "-" + String(today.getMonth() + 1).padStart(2, "0") + "-" + String(today.getDate()).padStart(2, "0");
@@ -1066,7 +1077,7 @@ async function startServer() {
 
 // ─── CUSTOMER PORTAL ─────────────────────────────────────────────────────
 
-app.post('/api/customers/register', async (req, res) => {
+app.post('/api/customers/register', authLimiter, async (req, res) => {
   try {
     const body = req.body || {};
     const email = safeText(body.email).toLowerCase();
@@ -1078,28 +1089,34 @@ app.post('/api/customers/register', async (req, res) => {
       return res.status(400).json({ error: 'Name, email, and password are required.' });
     }
 
+    if (password.length < 6) {
+      return res.status(400).json({ error: 'Password must be at least 6 characters.' });
+    }
+
     const existing = await User.findOne({ email });
     if (existing) {
       return res.status(409).json({ error: 'Email already registered.' });
     }
 
+    const hashedPassword = await bcrypt.hash(password, 10);
     const user = await User.create({
       id: `user-${Date.now()}`,
       name,
       email,
       phone,
-      password,
+      password: hashedPassword,
       role: 'customer'
     });
 
-    res.json({ user: { id: user.id, name: user.name, email: user.email, phone: user.phone, role: user.role } });
+    const token = generateToken(user);
+    res.json({ user: { id: user.id, name: user.name, email: user.email, phone: user.phone, role: user.role }, token });
   } catch (error) {
     console.error('Register failed:', error);
     res.status(500).json({ error: 'Unable to register user.' });
   }
 });
 
-app.post('/api/customers/login', async (req, res) => {
+app.post('/api/customers/login', authLimiter, async (req, res) => {
   try {
     const body = req.body || {};
     const email = safeText(body.email).toLowerCase();
@@ -1114,12 +1131,8 @@ app.post('/api/customers/login', async (req, res) => {
       return res.status(401).json({ error: 'Invalid email or password.' });
     }
 
-    let match;
-    if (user.password && !user.password.startsWith('$2b$') && !user.password.startsWith('$2a$')) {
-      // Plaintext password comparison
-      match = password === user.password;
-    } else {
-      // bcrypt hash comparison (for accounts with hashed passwords)
+    let match = false;
+    if (user.password && (user.password.startsWith('$2b$') || user.password.startsWith('$2a$'))) {
       match = await bcrypt.compare(password, user.password);
     }
 
@@ -1127,34 +1140,26 @@ app.post('/api/customers/login', async (req, res) => {
       return res.status(401).json({ error: 'Invalid email or password.' });
     }
 
-    res.json({ user: { id: user.id, name: user.name, email: user.email, phone: user.phone, role: user.role } });
+    const token = generateToken(user);
+    res.json({ user: { id: user.id, name: user.name, email: user.email, phone: user.phone, role: user.role }, token });
   } catch (error) {
     console.error('Login failed:', error);
     res.status(500).json({ error: 'Unable to log in.' });
   }
 });
 
-app.get('/api/customers/profile', authRequired, async (req, res) => {
+app.get('/api/customers/profile', requireAuth, async (req, res) => {
   try {
-    const email = req.get('x-user-email') || '';
-    if (!email) {
-      return res.status(400).json({ error: 'User email is required.' });
-    }
-    const user = await User.findOne({ email: email.toLowerCase() });
-    if (!user) {
-      return res.status(404).json({ error: 'Customer not found.' });
-    }
-    res.json({ success: true, user: { id: user.id, name: user.name, email: user.email, phone: user.phone, role: user.role } });
+    res.json({ success: true, user: { id: req.user.id, name: req.user.name, email: req.user.email, phone: req.user.phone, role: req.user.role } });
   } catch (error) {
     console.error('Failed to fetch profile:', error);
     res.status(500).json({ error: 'Unable to fetch profile.' });
   }
 });
 
-app.get('/api/customers/orders', authRequired, async (req, res) => {
+app.get('/api/customers/orders', requireAuth, async (req, res) => {
   try {
-    const email = req.get('x-user-email') || '';
-    const orders = await Order.find({ customerEmail: email }).sort({ createdAt: -1 });
+    const orders = await Order.find({ customerEmail: req.user.email }).sort({ createdAt: -1 });
     res.json({ success: true, orders: orders.map(serializeOrder) });
   } catch (error) {
     console.error('Failed to fetch customer orders:', error);
@@ -1162,17 +1167,16 @@ app.get('/api/customers/orders', authRequired, async (req, res) => {
   }
 });
 
-app.get('/api/customers/orders/:orderId', authRequired, async (req, res) => {
+app.get('/api/customers/orders/:orderId', requireAuth, async (req, res) => {
   try {
     const { orderId } = req.params;
-    const email = req.get('x-user-email') || '';
     const order = await Order.findOne({ orderId });
 
     if (!order) {
       return res.status(404).json({ error: 'Order not found.' });
     }
 
-    if (order.customerEmail.toLowerCase() !== email.toLowerCase()) {
+    if (req.user.role !== 'admin' && order.customerEmail.toLowerCase() !== req.user.email.toLowerCase()) {
       return res.status(403).json({ error: 'Access denied. This order does not belong to you.' });
     }
 
@@ -1185,7 +1189,7 @@ app.get('/api/customers/orders/:orderId', authRequired, async (req, res) => {
 
 // ─── PRINTING FILE MANAGEMENT ────────────────────────────────────────────
 
-app.post('/api/files/upload', authRequired, async (req, res) => {
+app.post('/api/files/upload', requireAuth, async (req, res) => {
   try {
     const { orderId, filename, originalName, fileType, fileSize, storagePath } = req.body || {};
     if (!orderId || !filename || !originalName || !fileType || fileSize === undefined || !storagePath) {
@@ -1220,7 +1224,7 @@ app.post('/api/files/upload', authRequired, async (req, res) => {
   }
 });
 
-app.get('/api/files/:orderId', authRequired, async (req, res) => {
+app.get('/api/files/:orderId', requireAuth, async (req, res) => {
   try {
     const { orderId } = req.params;
     const files = await OrderFile.find({ orderId }).sort({ uploadedAt: -1 });
@@ -1232,7 +1236,7 @@ app.get('/api/files/:orderId', authRequired, async (req, res) => {
   }
 });
 
-app.patch('/api/files/:fileId/approve', authRequired, async (req, res) => {
+app.patch('/api/files/:fileId/approve', requireAuth, async (req, res) => {
   try {
     const { fileId } = req.params;
     const { approved, notes } = req.body || {};
@@ -1254,7 +1258,7 @@ app.patch('/api/files/:fileId/approve', authRequired, async (req, res) => {
   }
 });
 
-app.patch('/api/files/:fileId/production-ready', authRequired, async (req, res) => {
+app.patch('/api/files/:fileId/production-ready', requireAuth, async (req, res) => {
   try {
     const { fileId } = req.params;
 
@@ -1275,7 +1279,7 @@ app.patch('/api/files/:fileId/production-ready', authRequired, async (req, res) 
   }
 });
 
-app.delete('/api/files/:fileId', authRequired, async (req, res) => {
+app.delete('/api/files/:fileId', requireAuth, async (req, res) => {
   try {
     const { fileId } = req.params;
 
@@ -1292,7 +1296,7 @@ app.delete('/api/files/:fileId', authRequired, async (req, res) => {
   }
 });
 
-app.post('/api/notifications/test', authRequired, async (req, res) => {
+app.post('/api/notifications/test', requireAuth, async (req, res) => {
   try {
     const { userId, type, title, message } = req.body || {};
     // In a real system, this would send via email, in-app, etc.
@@ -1306,27 +1310,37 @@ app.post('/api/notifications/test', authRequired, async (req, res) => {
   }
 });
 
-app.post('/api/audit/log', authRequired, async (req, res) => {
+app.post('/api/audit/log', requireAuth, async (req, res) => {
   try {
-    const { action, module, resourceType, resourceId, result, metadata } = req.body || {};
+    const { action, module: mod, resourceType, resourceId, previousValue, newValue, result, metadata } = req.body || {};
 
-    // Required fields validation
     if (!action) {
       return res.status(400).json({ error: 'Action is required.' });
     }
 
-    // In a real system, this would write to a database table or log file
-    // For now, just log and confirm
-    console.log(`AUDIT: [${action}] [${module}] [${resourceType}:${resourceId}] [${result}] ${JSON.stringify(metadata || {})}`);
+    const auditEntry = await AuditLog.create({
+      userId: req.user?.id || '',
+      userName: req.user?.name || '',
+      role: req.user?.role || '',
+      action,
+      module: mod || '',
+      resourceType: resourceType || '',
+      resourceId: resourceId || '',
+      previousValue: previousValue || null,
+      newValue: newValue || null,
+      result: result || 'Success',
+      metadata: metadata || {},
+      timestamp: new Date()
+    });
 
-    res.json({ success: true, auditLog: { action, module, resourceType, resourceId, result, timestamp: new Date(), ...metadata } });
+    res.json({ success: true, auditLog: auditEntry });
   } catch (error) {
     console.error('Failed to log audit entry:', error);
     res.status(500).json({ error: 'Unable to log audit entry.' });
   }
 });
 
-app.get("/api/ai/insights/sales", authRequired, async (req, res) => {
+app.get("/api/ai/insights/sales", requireAuth, async (req, res) => {
   try {
     const orders = await Order.find({}).sort({ createdAt: -1 });
 
@@ -1384,7 +1398,7 @@ app.get("/api/ai/insights/sales", authRequired, async (req, res) => {
   }
 });
 
-app.get("/api/ai/forecast/popular-services", authRequired, async (req, res) => {
+app.get("/api/ai/forecast/popular-services", requireAuth, async (req, res) => {
   try {
     const orders = await Order.find({}).sort({ createdAt: -1 });
 
@@ -1431,17 +1445,33 @@ app.get("/api/ai/forecast/popular-services", authRequired, async (req, res) => {
   }
 });
 
-app.get("/api/system/health", authRequired, async (req, res) => {
+app.get("/api/system/health", requireAuth, async (req, res) => {
   try {
-    // In a real system, this would check actual database connectivity,
-    // API status, external services, etc.
+    let database = 'disconnected';
+    try {
+      const state = mongoose.connection.readyState;
+      database = state === 1 ? 'OK' : 'Degraded';
+    } catch { database = 'Error'; }
+
+    let storage = 'OK';
+    try {
+      const testDir = path.join(__dirname, 'uploads');
+      if (!fs.existsSync(testDir)) fs.mkdirSync(testDir, { recursive: true });
+      fs.accessSync(testDir, fs.constants.W_OK);
+    } catch { storage = 'Error'; }
+
+    let excelGenerator = 'OK';
+    try {
+      await import('exceljs');
+    } catch { excelGenerator = 'Error'; }
+
     const healthStatus = {
-      database: 'OK',
+      database,
       api: 'OK',
+      storage,
       aiService: 'OK',
-      paymentService: 'OK',
-      storage: 'OK',
-      excelGenerator: 'OK',
+      paymentService: 'Demo',
+      excelGenerator,
       timestamp: new Date()
     };
 
@@ -1452,18 +1482,27 @@ app.get("/api/system/health", authRequired, async (req, res) => {
   }
 });
 
-app.get("/api/system/backup-status", authRequired, async (req, res) => {
+app.get("/api/system/backup-status", requireAuth, async (req, res) => {
   try {
-    // In a real system, this would check backup history, last backup time, etc.
+    let reportsDir = 'unknown';
+    let reportCount = 0;
+    try {
+      const reportsPath = path.join(__dirname, 'reports', 'orders');
+      if (fs.existsSync(reportsPath)) {
+        reportsDir = 'accessible';
+        const files = fs.readdirSync(reportsPath).filter(f => f.endsWith('.xlsx'));
+        reportCount = files.length;
+      } else {
+        reportsDir = 'not configured';
+      }
+    } catch { reportsDir = 'error'; }
+
     const backupStatus = {
-      lastBackup: new Date(Date.now() - 86400000), // Yesterday for demo
-      backupFrequency: 'Daily',
-      lastSuccessfulBackup: new Date(Date.now() - 86400000),
-      backupHistory: [
-        { date: new Date(Date.now() - 86400000), status: 'Success', size: '2.3MB' },
-        { date: new Date(Date.now() - 172800000), status: 'Success', size: '2.1MB' }
-      ],
-      retentionPolicy: '30 days'
+      reportsDirectory: reportsDir,
+      generatedReports: reportCount,
+      backupFrequency: 'Manual (Excel reports)',
+      retentionPolicy: 'Reports stored locally',
+      timestamp: new Date()
     };
 
     res.json({ success: true, data: backupStatus });
@@ -1473,7 +1512,7 @@ app.get("/api/system/backup-status", authRequired, async (req, res) => {
   }
 });
 
-app.get("/api/ai/insights/production", authRequired, async (req, res) => {
+app.get("/api/ai/insights/production", requireAuth, async (req, res) => {
   try {
     const orders = await Order.find({}).sort({ createdAt: -1 });
 
@@ -1513,7 +1552,7 @@ app.get("/api/ai/insights/production", authRequired, async (req, res) => {
   }
 });
 
-app.get("/api/search/orders", authRequired, async (req, res) => {
+app.get("/api/search/orders", requireAuth, async (req, res) => {
   try {
     const { query, status, customer, service, startDate, endDate } = req.query;
     const filter = {};
@@ -1542,7 +1581,7 @@ app.get("/api/search/orders", authRequired, async (req, res) => {
   }
 });
 
-app.get("/api/search/customers", authRequired, async (req, res) => {
+app.get("/api/search/customers", requireAuth, async (req, res) => {
   try {
     const { query } = req.query;
     const filter = {};
@@ -1563,7 +1602,7 @@ app.get("/api/search/customers", authRequired, async (req, res) => {
   }
 });
 
-app.get("/api/employees", authRequired, async (req, res) => {
+app.get("/api/employees", requireAuth, async (req, res) => {
   try {
     const roles = ["admin", "manager", "cashier", "production", "customer"];
     const employees = roles.map(function(role) {
@@ -1583,7 +1622,7 @@ app.get("/api/employees", authRequired, async (req, res) => {
   }
 });
 
-app.get("/api/employees/:role", authRequired, async (req, res) => {
+app.get("/api/employees/:role", requireAuth, async (req, res) => {
   try {
     const role = req.params.role;
     const validRoles = ["admin", "manager", "cashier", "production", "customer"];
@@ -1607,7 +1646,7 @@ app.get("/api/employees/:role", authRequired, async (req, res) => {
   }
 });
 
-app.post("/api/quotations", authRequired, async (req, res) => {
+app.post("/api/quotations", requireAuth, async (req, res) => {
   try {
     const { customerId, customerName, customerEmail, items, notes } = req.body || {};
     if (!customerId || !customerName || !items || !items.length) {
@@ -1644,7 +1683,7 @@ app.post("/api/quotations", authRequired, async (req, res) => {
   }
 });
 
-app.patch("/api/quotations/:quotationId/approve", authRequired, async (req, res) => {
+app.patch("/api/quotations/:quotationId/approve", requireAuth, async (req, res) => {
   try {
     const { quotationId } = req.params;
 
@@ -1655,7 +1694,7 @@ app.patch("/api/quotations/:quotationId/approve", authRequired, async (req, res)
   }
 });
 
-app.post("/api/invoices", authRequired, async (req, res) => {
+app.post("/api/invoices", requireAuth, async (req, res) => {
   try {
     const { quotationId, orderId, items, taxRate, total } = req.body || {};
     if (!quotationId || !orderId || !total) {
@@ -1691,7 +1730,7 @@ app.post("/api/invoices", authRequired, async (req, res) => {
   }
 });
 
-app.patch("/api/payments", authRequired, async (req, res) => {
+app.patch("/api/payments", requireAuth, async (req, res) => {
   try {
     const { orderId, amount, paymentMethod, transactionReference } = req.body || {};
     if (!orderId || !amount) {
@@ -1730,7 +1769,7 @@ app.patch("/api/payments", authRequired, async (req, res) => {
   }
 });
 
-app.patch("/api/payments/:paymentId/verify", authRequired, async (req, res) => {
+app.patch("/api/payments/:paymentId/verify", requireAuth, async (req, res) => {
   try {
     const { paymentId } = req.params;
 
@@ -1744,7 +1783,7 @@ app.patch("/api/payments/:paymentId/verify", authRequired, async (req, res) => {
 // Duplicate /api/production/start removed - using the fixed version defined above
 
 
-app.post("/api/feedback", authRequired, async (req, res) => {
+app.post("/api/feedback", requireAuth, async (req, res) => {
   try {
     const { orderId, rating, quality, service, speed, overall, comments } = req.body || {};
     if (!orderId || !rating) {
@@ -1772,7 +1811,7 @@ app.post("/api/feedback", authRequired, async (req, res) => {
   }
 });
 
-app.get("/api/feedback/summary", authRequired, async (req, res) => {
+app.get("/api/feedback/summary", requireAuth, async (req, res) => {
   try {
     // In a real system, this would query a feedback collection
     // For now, return structured summary data
@@ -1795,7 +1834,7 @@ app.get("/api/feedback/summary", authRequired, async (req, res) => {
 });
 
 
-app.get("/api/bi/dashboard", authRequired, async (req, res) => {
+app.get("/api/bi/dashboard", requireAuth, async (req, res) => {
   try {
     const orders = await Order.find({}).sort({ createdAt: -1 });
 
@@ -1856,7 +1895,7 @@ app.get("/api/bi/dashboard", authRequired, async (req, res) => {
   }
 });
 
-app.get("/api/bi/analytics", authRequired, async (req, res) => {
+app.get("/api/bi/analytics", requireAuth, async (req, res) => {
   try {
     const orders = await Order.find({}).sort({ createdAt: -1 });
 
@@ -1931,30 +1970,30 @@ function validateBody(schema) {
 }
 
 // Authentication bypass test endpoint
-app.get("/api/security/test/auth-bypass", authRequired, async (req, res) => {
+app.get("/api/security/test/auth-bypass", requireAuth, async (req, res) => {
   try {
-    res.json({ success: true, data: { message: "Authentication gate is active", userRole: req.get("x-user-role") } });
+    res.json({ success: true, data: { message: "Authentication gate is active", userRole: req.user.role, userId: req.user.id } });
   } catch (error) {
     res.status(500).json({ error: "Security test failed." });
   }
 });
 
 // Authorization test endpoint
-app.get("/api/security/test/authorize", authRequired, async (req, res) => {
+app.get("/api/security/test/authorize", requireAuth, async (req, res) => {
   try {
-    const userRole = req.get("x-user-role") || "none";
-    const hasAdminAccess = userRole === "admin";
-    res.json({ success: true, data: { userRole: userRole, hasAdminAccess: hasAdminAccess } });
+    const userRole = req.user.role;
+    const hasAdminAccess = userRole === 'admin';
+    res.json({ success: true, data: { userRole, hasAdminAccess } });
   } catch (error) {
     res.status(500).json({ error: "Authorization test failed." });
   }
 });
 
 // IDOR prevention test - ensures users can only access their own records
-app.get("/api/security/test/idors", authRequired, async (req, res) => {
+app.get("/api/security/test/idors", requireAuth, async (req, res) => {
   try {
-    const userEmail = req.get("x-user-email") || "";
-    res.json({ success: true, data: { userEmail: userEmail, idorPrevention: "Orders are filtered by customer email" } });
+    const userEmail = req.user.email;
+    res.json({ success: true, data: { userEmail, idorPrevention: "Orders are filtered by authenticated user email" } });
   } catch (error) {
     res.status(500).json({ error: "IDOR test failed." });
   }
@@ -1970,7 +2009,7 @@ app.post("/api/security/test/input-validation", validateBody(Joi.object({ testFi
 });
 
 // Rate limiting test endpoint
-app.get("/api/security/test/rate-limit", authRequired, async (req, res) => {
+app.get("/api/security/test/rate-limit", requireAuth, async (req, res) => {
   try {
     res.json({ success: true, data: { message: "Rate limiter is configured", timestamp: new Date() } });
   } catch (error) {
@@ -1979,7 +2018,7 @@ app.get("/api/security/test/rate-limit", authRequired, async (req, res) => {
 });
 
 // SQL injection prevention test
-app.get("/api/security/test/sql-injection", authRequired, async (req, res) => {
+app.get("/api/security/test/sql-injection", requireAuth, async (req, res) => {
   try {
     const queryParam = req.query.search || "";
     res.json({ success: true, data: { searchTerm: queryParam, sqlSafe: "Parameterized queries used" } });
@@ -1988,23 +2027,19 @@ app.get("/api/security/test/sql-injection", authRequired, async (req, res) => {
   }
 });
 
-app.get("/api/security/audit-logs", authRequired, async (req, res) => {
+app.get("/api/security/audit-logs", requireAuth, async (req, res) => {
   try {
-    // In a real system, this would fetch from audit log collection
-    const auditLogs = [
-      { action: "Login", module: "Auth", result: "Success", timestamp: new Date(Date.now() - 3600000) },
-      { action: "Order Creation", module: "Commerce", result: "Success", timestamp: new Date(Date.now() - 7200000) },
-      { action: "Payment", module: "Payment", result: "Success", timestamp: new Date(Date.now() - 86400000) }
-    ];
-    res.json({ success: true, data: auditLogs });
+    const logs = await AuditLog.find({}).sort({ timestamp: -1 }).limit(100);
+    res.json({ success: true, data: logs });
   } catch (error) {
+    console.error("Failed to fetch audit logs:", error);
     res.status(500).json({ error: "Failed to fetch audit logs." });
   }
 });
 
-app.get("/api/security/permissions", authRequired, async (req, res) => {
+app.get("/api/security/permissions", requireAuth, async (req, res) => {
   try {
-    const userRole = req.get("x-user-role") || "customer";
+    const userRole = req.user.role;
     const permissions = {
       customer: ["view-own-orders", "view-quotations", "make-payments"],
       cashier: ["view-orders", "process-payments", "issue-refunds"],
@@ -2015,7 +2050,7 @@ app.get("/api/security/permissions", authRequired, async (req, res) => {
 
     const userPermissions = permissions[userRole] || permissions.customer;
 
-    res.json({ success: true, data: { userRole: userRole, permissions: userPermissions } });
+    res.json({ success: true, data: { userRole, permissions: userPermissions } });
   } catch (error) {
     res.status(500).json({ error: "Failed to fetch permissions." });
   }
@@ -2025,7 +2060,7 @@ app.get("/api/security/permissions", authRequired, async (req, res) => {
 app.get("/uploads/orders/:filename", async (req, res) => {
   try {
     const filename = path.basename(req.params.filename);
-    const filePath = path.join(__dirname, '..', 'uploads', 'orders', filename);
+    const filePath = path.join(__dirname, 'uploads', 'orders', filename);
 
     // Check if file exists
     if (!fs.existsSync(filePath)) {

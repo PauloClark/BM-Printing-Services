@@ -23,9 +23,19 @@ const ORDER_STATUS_COLORS = {
 
 const fmt = (v) => `₱${Number(v || 0).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 const fmtDate = (d) => d ? new Date(d).toLocaleDateString('en-PH', { year: 'numeric', month: 'short', day: 'numeric' }) : '';
-const H = { 'x-user-role': 'admin', 'Content-Type': 'application/json' };
+
+const getToken = () => {
+  try {
+    const raw = localStorage.getItem('session');
+    if (raw) { const s = JSON.parse(raw); return s?.token || ''; }
+  } catch {}
+  return '';
+};
 const api = async (url, opts = {}) => {
-  const r = await fetch(url, { headers: H, ...opts });
+  const token = getToken();
+  const headers = { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json', ...opts.headers };
+  const r = await fetch(url, { ...opts, headers });
+  if (r.status === 401) { localStorage.removeItem('session'); window.location.reload(); throw new Error('Session expired. Please login again.'); }
   if (!r.ok) throw new Error(`HTTP ${r.status}`);
   return r.json();
 };
@@ -269,7 +279,8 @@ export default function AdminPanel() {
       const ds = reportDate instanceof Date
         ? `${reportDate.getFullYear()}-${String(reportDate.getMonth()+1).padStart(2,'0')}-${String(reportDate.getDate()).padStart(2,'0')}`
         : String(reportDate);
-      const response = await fetch(`/api/admin/reports/orders/${ds}/download`, { headers: H });
+      const token = getToken();
+      const response = await fetch(`/api/admin/reports/orders/${ds}/download`, { headers: { 'Authorization': `Bearer ${token}` } });
       if (!response.ok) {
         const err = await response.json().catch(() => ({}));
         throw new Error(err.error || `Download failed (HTTP ${response.status})`);

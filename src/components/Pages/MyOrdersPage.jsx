@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { C } from "../../constants/colors";
 import { store } from "../../utils/storage";
 import { Card } from "../Common/Card";
@@ -6,15 +6,46 @@ import { Btn } from "../Common/Btn";
 import { Badge } from "../Common/Badge";
 import { Input } from "../Common/Input";
 import { Modal } from "../Common/Modal";
-import { v4 as uuidv4 } from "uuid";
 
 export const MyOrdersPage = ({ orders, user, setPage, showToast }) => {
   const [reviewModal, setReviewModal] = useState(null);
   const [review, setReview] = useState({ rating: 5, comment: "" });
   const [submittingReview, setSubmittingReview] = useState(false);
-  const myOrders = orders.filter(
-    o => o.email === user?.email || o.userId === user?.id
-  );
+  const [myOrders, setMyOrders] = useState([]);
+  const [loadingOrders, setLoadingOrders] = useState(true);
+
+  useEffect(() => {
+    const fetchMyOrders = async () => {
+      setLoadingOrders(true);
+      try {
+        const raw = localStorage.getItem('session');
+        const session = raw ? JSON.parse(raw) : null;
+        const token = session?.token;
+        if (!token) {
+          setMyOrders(orders.filter(o => o.email === user?.email || o.userId === user?.id));
+          setLoadingOrders(false);
+          return;
+        }
+        const response = await fetch('/api/customers/orders', {
+          headers: { 'Authorization': `Bearer ${token}` }
+        });
+        if (response.ok) {
+          const data = await response.json();
+          if (data.success && Array.isArray(data.orders)) {
+            setMyOrders(data.orders);
+          } else {
+            setMyOrders(orders.filter(o => o.email === user?.email || o.userId === user?.id));
+          }
+        } else {
+          setMyOrders(orders.filter(o => o.email === user?.email || o.userId === user?.id));
+        }
+      } catch {
+        setMyOrders(orders.filter(o => o.email === user?.email || o.userId === user?.id));
+      }
+      setLoadingOrders(false);
+    };
+    fetchMyOrders();
+  }, [orders, user]);
 
   const submitReview = async () => {
     if (!review.comment.trim()) {
@@ -136,15 +167,15 @@ export const MyOrdersPage = ({ orders, user, setPage, showToast }) => {
                       </div>
                       {o.designFileType && o.designFileType.startsWith('image') && (
                         <img
-                          src={o.designFilePath ? `/uploads/orders/${o.designFilePath.split('/').pop()}` : ''}
+                          src={o.designFileName ? `/uploads/orders/${o.designFileName}` : ''}
                           alt="Design preview"
                           style={{ width: 80, height: 60, objectFit: 'contain', borderRadius: 4, marginTop: 4 }}
                         />
                       )}
-                      {o.designFilePath && !o.designFileType.startsWith('image') && (
+                      {o.designFileName && !(o.designFileType && o.designFileType.startsWith('image')) && (
                         <a
-                          href={`/uploads/orders/${o.designFilePath.split('/').pop()}`}
-                          style={{ color: C.blue, fontSize: 12, textDecoration: 'underline' }}
+                          href={`/uploads/orders/${o.designFileName}`}
+                          style={{ color: C.red, fontSize: 12, textDecoration: 'underline' }}
                         >
                           View/Download
                         </a>

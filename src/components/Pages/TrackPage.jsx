@@ -190,17 +190,17 @@ export const TrackPage = ({ orders, user }) => {
               </div>
               {found.designFileType && found.designFileType.startsWith('image') && (
                 <img
-                  src={found.designFilePath ? `/uploads/orders/${found.designFilePath.split('/').pop()}` : ''}
+                  src={found.designFileName ? `/uploads/orders/${found.designFileName}` : ''}
                   alt="Design preview"
                   style={{ width: 80, height: 60, objectFit: 'contain', borderRadius: 4, marginTop: 4 }}
                 />
               )}
-              {found.designFilePath && !found.designFileType.startsWith('image') && (
+              {found.designFileName && !(found.designFileType && found.designFileType.startsWith('image')) && (
                 <a
-                  href={`/uploads/orders/${found.designFilePath.split('/').pop()}`}
+                  href={`/uploads/orders/${found.designFileName}`}
                   target="_blank"
                   rel="noopener"
-                  style={{ color: C.blue, fontSize: 12, textDecoration: 'underline' }}
+                  style={{ color: C.red, fontSize: 12, textDecoration: 'underline' }}
                 >
                   View/Download
                 </a>

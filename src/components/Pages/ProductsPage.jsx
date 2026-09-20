@@ -1,18 +1,71 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { C } from "../../constants/colors";
 import { PRODUCTS, CATEGORIES } from "../../constants/products";
 import { Card } from "../Common/Card";
 import { Btn } from "../Common/Btn";
 
+const CATEGORY_ICONS = {
+  "All": "📦",
+  "Clothing & Apparel": "👕",
+  "School Supplies": "🪪",
+  "Tarpaulins & Banners": "🖼️",
+  "Promotional Items": "☕"
+};
+
 export const ProductsPage = ({ setPage, setSelectedProduct }) => {
   const [cat, setCat] = useState("All");
   const [search, setSearch] = useState("");
-  const filtered = PRODUCTS.filter(
+  const [dbProducts, setDbProducts] = useState([]);
+  const [loadingProducts, setLoadingProducts] = useState(true);
+
+  useEffect(() => {
+    const fetchProducts = async () => {
+      try {
+        const response = await fetch("/api/products");
+        if (response.ok) {
+          const data = await response.json();
+          if (data.products && data.products.length > 0) {
+            const merged = data.products.map(dp => {
+              const local = PRODUCTS.find(lp => lp.id === dp.id);
+              return {
+                id: dp.id,
+                name: dp.name,
+                price: dp.price,
+                image: dp.image || local?.image || "📦",
+                description: dp.description || local?.description || "",
+                minQty: dp.minQty || local?.minQty || 1,
+                category: dp.category || local?.category || "Printing",
+                stock: dp.stock || 0,
+                lowStockThreshold: dp.lowStockThreshold || 10,
+                status: dp.status || "Active",
+                unit: local?.unit || "per piece",
+                popular: local?.popular || false
+              };
+            });
+            setDbProducts(merged);
+          } else {
+            setDbProducts(PRODUCTS);
+          }
+        } else {
+          setDbProducts(PRODUCTS);
+        }
+      } catch {
+        setDbProducts(PRODUCTS);
+      }
+      setLoadingProducts(false);
+    };
+    fetchProducts();
+  }, []);
+
+  const displayProducts = dbProducts.length > 0 ? dbProducts : PRODUCTS;
+  const filtered = displayProducts.filter(
     p =>
       (cat === "All" || p.category === cat) &&
       (p.name.toLowerCase().includes(search.toLowerCase()) ||
         p.description.toLowerCase().includes(search.toLowerCase()))
   );
+
+  const dynamicCategories = ["All", ...new Set(displayProducts.map(p => p.category).filter(Boolean))];
 
   return (
     <div
@@ -51,7 +104,7 @@ export const ProductsPage = ({ setPage, setSelectedProduct }) => {
         <input
           value={search}
           onChange={e => setSearch(e.target.value)}
-          placeholder="🔍  Search products..."
+          placeholder="Search products..."
           style={{
             padding: "10px 16px",
             border: `1.5px solid ${C.gray200}`,
@@ -62,7 +115,7 @@ export const ProductsPage = ({ setPage, setSelectedProduct }) => {
           }}
         />
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-          {CATEGORIES.map(c => (
+          {dynamicCategories.map(c => (
             <button
               key={c}
               onClick={() => setCat(c)}
@@ -82,6 +135,12 @@ export const ProductsPage = ({ setPage, setSelectedProduct }) => {
           ))}
         </div>
       </div>
+
+      {loadingProducts && (
+        <div style={{ textAlign: "center", padding: "60px 0", color: C.gray400 }}>
+          Loading products...
+        </div>
+      )}
 
       <div
         style={{
@@ -113,9 +172,15 @@ export const ProductsPage = ({ setPage, setSelectedProduct }) => {
                 POPULAR
               </div>
             )}
-            <div style={{ fontSize: 48, marginBottom: 12, textAlign: "center" }}>
-              {p.image}
-            </div>
+            {p.image && p.image.startsWith("data:") ? (
+              <div style={{ textAlign: "center", marginBottom: 12 }}>
+                <img src={p.image} alt={p.name} style={{ width: 80, height: 80, objectFit: "contain", borderRadius: 8 }} />
+              </div>
+            ) : (
+              <div style={{ fontSize: 48, marginBottom: 12, textAlign: "center" }}>
+                {p.image || "📦"}
+              </div>
+            )}
             <div
               style={{
                 fontSize: 11,
@@ -167,8 +232,13 @@ export const ProductsPage = ({ setPage, setSelectedProduct }) => {
                   ₱{p.price.toLocaleString()}
                 </div>
                 <div style={{ fontSize: 11, color: C.gray400 }}>
-                  {p.unit} · min. {p.minQty} pcs
+                  {p.unit || "per piece"} · min. {p.minQty} pcs
                 </div>
+                {p.stock !== undefined && p.stock <= (p.lowStockThreshold || 10) && (
+                  <div style={{ fontSize: 11, color: p.stock === 0 ? "#c62828" : C.warning, fontWeight: 600, marginTop: 2 }}>
+                    {p.stock === 0 ? "Out of Stock" : `Low Stock: ${p.stock} left`}
+                  </div>
+                )}
               </div>
               <Btn
                 size="sm"
@@ -184,7 +254,7 @@ export const ProductsPage = ({ setPage, setSelectedProduct }) => {
         ))}
       </div>
 
-      {filtered.length === 0 && (
+      {!loadingProducts && filtered.length === 0 && (
         <div style={{ textAlign: "center", padding: "60px 0", color: C.gray400 }}>
           No products found.
         </div>
