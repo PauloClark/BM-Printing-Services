@@ -1,10 +1,10 @@
 import { useState } from "react";
-import { C } from "../../constants/colors";
 import { store } from "../../utils/storage";
 import { generateId } from "../../utils/helpers";
 import { Card } from "../Common/Card";
 import { Btn } from "../Common/Btn";
 import { Input } from "../Common/Input";
+import "./ContactPage.css";
 
 export const ContactPage = ({ showToast }) => {
   const [form, setForm] = useState({
@@ -35,190 +35,113 @@ export const ContactPage = ({ showToast }) => {
   };
 
   return (
-    <div
-      style={{
-        maxWidth: 900,
-        margin: "40px auto",
-        padding: "0 24px"
-      }}
-      className="fade-in"
-    >
-      <h1
-        style={{
-          fontFamily: "Montserrat",
-          fontWeight: 800,
-          fontSize: 28,
-          marginBottom: 8
-        }}
-      >
-        Contact Us
-      </h1>
-      <p style={{ color: C.gray600, marginBottom: 32 }}>
-        Have questions? Send us a message and we'll respond within the day.
-      </p>
+    <div className="fade-in bm-contact-page">
+      <div className="bm-contact-main">
+        <div className="bm-contact-left">
+          <section className="bm-contact-form-section" aria-labelledby="bm-contact-title">
+            <p className="bm-contact-eyebrow">CONTACT US</p>
+            <h1 id="bm-contact-title" className="bm-contact-title">
+              Get in <span>Touch</span>
+            </h1>
+            <p className="bm-contact-subtitle">
+              Have questions? Send us a message and we'll respond within the day.
+            </p>
 
-      <div
-        style={{
-          display: "grid",
-          gridTemplateColumns: "1fr 1.5fr",
-          gap: 32
-        }}
-      >
-        <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-          {[
-            ["🌎", "Google Maps", " https://maps.app.goo.gl/V4tzzj7vkaafMc2o7   "],
-            ["📘", "Facebook", "https://www.facebook.com/BMPS01 or Visit 'BM PS'"],
-            ["📧", "Email", "bmprintingservices11@gmail.com"],
-            ["📱", "Phone", "0908 304 5001 / 0997 642 0849"],
-            ["📍", "Location", "NHA Phase 2, R. Castillo Site and Services, Brgy. Gov. Duterte, Agdao, Davao City,Philippines"]
-          ].map(([i, l, v]) => (
-            <Card key={l}>
-              <div
-                style={{
-                  display: "flex",
-                  gap: 12,
-                  alignItems: "center"
-                }}
-              >
-                <span style={{ fontSize: 28 }}>{i}</span>
+            <div className="bm-contact-form-fields">
+              <div className="bm-contact-name-email">
+                <Input
+                  label="Name"
+                  value={form.name}
+                  onChange={v => f("name", v)}
+                  placeholder="Your name"
+                />
+                <Input
+                  label="Email"
+                  type="email"
+                  value={form.email}
+                  onChange={v => f("email", v)}
+                  placeholder="your@email.com"
+                />
+              </div>
+              <Input
+                label="Subject"
+                value={form.subject}
+                onChange={v => f("subject", v)}
+                placeholder="What's this about?"
+              />
+              <Input
+                label="Message"
+                type="textarea"
+                value={form.message}
+                onChange={v => f("message", v)}
+                placeholder="Tell us more..."
+                rows={5}
+              />
+              <Btn style={{ width: "100%" }} onClick={send} loading={loading}>
+                Send Message
+              </Btn>
+            </div>
+          </section>
+
+          <section className="bm-contact-information" aria-labelledby="bm-contact-info-title">
+            <h2 id="bm-contact-info-title">Contact Information</h2>
+            <div className="bm-contact-info-grid">
+              <div className="bm-contact-info-item">
+                <img src="/icons/phone-icon.png" alt="" />
                 <div>
-                  <div
-                    style={{
-                      fontWeight: 700,
-                      fontSize: 14
-                    }}
-                  >
-                    {l}
-                  </div>
-                  <div
-                    style={{
-                      fontSize: 13,
-                      color: C.gray600
-                    }}
-                  >
-                    {v}
-                  </div>
+                  <h3>Phone</h3>
+                  <a href="tel:+639083045001">0908 304 5001 / 0997 642 0849</a>
                 </div>
               </div>
-            </Card>
-          ))}
-          <Card
-            style={{
-              background: C.infoBg,
-              borderColor: C.info,
-              padding: "18px 20px"
-            }}
-          >
-            <h3
-              style={{
-                fontFamily: "Montserrat",
-                fontWeight: 700,
-                marginBottom: 12,
-                color: C.info
-              }}
-            >
-              Contact Admin or Owner for Payment
-            </h3>
-            <p
-              style={{
-                fontSize: 13,
-                color: C.info,
-                marginBottom: 16
-              }}
-            >
-              To complete your payment, please contact the BM Printing Services Admin or Owner directly. You may use Facebook or Gmail to arrange and confirm your payment.
-            </p>
-            <div style={{ display: "grid", gap: 10 }}>
-              <a
-                href="https://www.facebook.com/BMPS01"
-                target="_blank"
-                rel="noreferrer"
-                style={{
-                  display: "inline-flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  padding: "10px 16px",
-                  borderRadius: 8,
-                  background: C.red,
-                  color: "#fff",
-                  textDecoration: "none",
-                  fontWeight: 700
-                }}
-              >
-                Contact on Facebook
-              </a>
-              <a
-                href="mailto:bmprintingservices11@gmail.com"
-                style={{
-                  display: "inline-flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  padding: "10px 16px",
-                  borderRadius: 8,
-                  background: C.black,
-                  color: "#fff",
-                  textDecoration: "none",
-                  fontWeight: 700
-                }}
-              >
-                Contact via Gmail
-              </a>
+              <div className="bm-contact-info-item">
+                <img src="/icons/gmail-icon.png" alt="" />
+                <div>
+                  <h3>Email</h3>
+                  <a href="mailto:bmprintingservices11@gmail.com">bmprintingservices11@gmail.com</a>
+                </div>
+              </div>
+              <div className="bm-contact-info-item">
+                <img src="/icons/facebook-icon.png" alt="" />
+                <div>
+                  <h3>Facebook</h3>
+                  <a href="https://www.facebook.com/BMPS01" target="_blank" rel="noreferrer">BMPS01</a>
+                  <span>or Visit 'BM PS'</span>
+                </div>
+              </div>
+              <div className="bm-contact-info-item">
+                <img src="/icons/location-icon.png" alt="" />
+                <div>
+                  <h3>Location</h3>
+                  <address>NHA Phase 2, R. Castillo Site and Services, Brgy. Gov. Duterte, Agdao, Davao City, Philippines</address>
+                </div>
+              </div>
             </div>
-          </Card>
+          </section>
         </div>
 
-        <Card>
-          <h3
-            style={{
-              fontFamily: "Montserrat",
-              fontWeight: 700,
-              marginBottom: 20
-            }}
-          >
-            Send a Message
-          </h3>
-          <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-            <div
-              style={{
-                display: "grid",
-                gridTemplateColumns: "1fr 1fr",
-                gap: 14
-              }}
-            >
-              <Input
-                label="Name"
-                value={form.name}
-                onChange={v => f("name", v)}
-                placeholder="Your name"
-              />
-              <Input
-                label="Email"
-                type="email"
-                value={form.email}
-                onChange={v => f("email", v)}
-                placeholder="your@email.com"
-              />
-            </div>
-            <Input
-              label="Subject"
-              value={form.subject}
-              onChange={v => f("subject", v)}
-              placeholder="What's this about?"
-            />
-            <Input
-              label="Message"
-              type="textarea"
-              value={form.message}
-              onChange={v => f("message", v)}
-              placeholder="Tell us more..."
-              rows={5}
-            />
-            <Btn onClick={send} loading={loading}>
-              Send Message
-            </Btn>
-          </div>
-        </Card>
+        <div className="bm-contact-map">
+          <iframe
+            title="Map to BM Printing Services"
+            src={`https://maps.google.com/maps?q=${encodeURIComponent("NHA Phase 2, R. Castillo Site and Services, Brgy. Gov. Duterte, Agdao, Davao City, Philippines")}&output=embed`}
+            loading="lazy"
+            referrerPolicy="no-referrer-when-downgrade"
+            allowFullScreen
+          />
+        </div>
       </div>
+
+      <Card className="bm-contact-payment">
+        <div>
+          <h2>Payment Assistance</h2>
+          <p>
+            To complete your payment, contact the BM Printing Services Admin or Owner directly to arrange and confirm it.
+          </p>
+        </div>
+        <div className="bm-contact-payment-actions">
+          <a href="https://www.facebook.com/BMPS01" target="_blank" rel="noreferrer">Contact on Facebook</a>
+          <a href="mailto:bmprintingservices11@gmail.com">Contact via Gmail</a>
+        </div>
+      </Card>
     </div>
   );
 };

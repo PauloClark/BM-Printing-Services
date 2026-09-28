@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { C } from "./constants/colors";
 import { globalStyles } from "./constants/styles";
+import "./constants/internalPages.css";
 import { PRODUCTS } from "./constants/products";
 import { store } from "./utils/storage";
 import { Navbar } from "./components/Widgets/Navbar";
@@ -32,17 +33,56 @@ export default function App() {
     []
   );
 
+  const toSupabaseAppUser = useCallback((supabaseUser) => {
+    const metadata = supabaseUser.user_metadata || {};
+    const email = supabaseUser.email || "";
+    const fullName = metadata.full_name || metadata.name ||
+      [metadata.given_name, metadata.family_name].filter(Boolean).join(" ");
+
+    return {
+      id: supabaseUser.id,
+      name: fullName || email.split("@")[0] || "Customer",
+      email,
+      avatar: metadata.avatar_url || metadata.picture || "",
+      role: "customer",
+      authProvider: "supabase"
+    };
+  }, []);
+
   // Load persisted data on mount
   useEffect(() => {
     (async () => {
       try {
-        // Restore session
-        const session = await store.get("session");
-        if (session) setUser(session);
-
-        // Load orders from MongoDB backend first
+        let supabaseUser = null;
+        let orderAuthToken = "";
         try {
-          const response = await fetch("/api/orders");
+          const { supabase } = await import("./utils/supabaseClient");
+          const { data } = await supabase.auth.getSession();
+          if (data.session?.user) {
+            supabaseUser = toSupabaseAppUser(data.session.user);
+            orderAuthToken = data.session.access_token;
+          }
+        } catch (error) {
+          console.error("Supabase session restore failed:", error);
+        }
+
+        if (supabaseUser) {
+          await store.del("session");
+          setUser(supabaseUser);
+        } else {
+          const session = await store.get("session");
+          if (session) {
+            setUser(session);
+            orderAuthToken = session.token || "";
+          }
+        }
+
+        // Load only orders owned by the restored session.
+        try {
+          if (!orderAuthToken) throw new Error("No authenticated order session.");
+          const response = await fetch("/api/orders", {
+            headers: { Authorization: `Bearer ${orderAuthToken}` }
+          });
           if (!response.ok) throw new Error("Backend error");
           const text = await response.text();
           if (!text) throw new Error("Empty response");
@@ -139,16 +179,70 @@ export default function App() {
       }
       setLoadingApp(false);
     })();
-  }, []);
+  }, [toSupabaseAppUser]);
+
+  useEffect(() => {
+    let active = true;
+    let subscription;
+
+    const listenForSupabaseSession = async () => {
+      try {
+        const { supabase } = await import("./utils/supabaseClient");
+        if (!active) return;
+
+        const { data } = supabase.auth.onAuthStateChange((event, session) => {
+          if (!active) return;
+
+          if (session?.user) {
+            void store.del("session");
+            setUser(toSupabaseAppUser(session.user));
+            if (event === "SIGNED_IN") setPage("home");
+          } else if (event === "SIGNED_OUT") {
+            void store.del("session");
+            setUser(current => current?.authProvider === "supabase" ? null : current);
+          }
+        });
+        subscription = data.subscription;
+      } catch (error) {
+        console.error("Supabase session initialization failed:", error);
+      }
+    };
+
+    listenForSupabaseSession();
+    return () => {
+      active = false;
+      subscription?.unsubscribe();
+    };
+  }, [toSupabaseAppUser]);
 
   const addOrder = useCallback(async (order) => {
     try {
+      let accessToken = user?.token || "";
+      if (user?.authProvider === "supabase") {
+        const { supabase } = await import("./utils/supabaseClient");
+        const { data, error } = await supabase.auth.getSession();
+        if (error || !data.session?.access_token) {
+          throw new Error("Your sign-in session expired. Please login again.");
+        }
+        accessToken = data.session.access_token;
+      }
+      if (!accessToken) throw new Error("Please login before placing an order.");
+
       const response = await fetch("/api/orders", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${accessToken}`
+        },
         body: JSON.stringify(order)
       });
-      if (!response.ok) throw new Error("Server error");
+      if (!response.ok) {
+        const data = await response.json().catch(() => ({}));
+        const error = new Error(data.error || `Order API request failed with HTTP ${response.status}.`);
+        error.status = response.status;
+        error.details = data.details;
+        throw error;
+      }
       const text = await response.text();
       if (!text) throw new Error("Empty response");
       const data = JSON.parse(text);
@@ -157,7 +251,16 @@ export default function App() {
         return data.order;
       }
     } catch (error) {
-      console.error("Order sync failed:", error);
+      if (user?.authProvider === "supabase") {
+        console.error("Authenticated order submission failed:", {
+          status: error.status,
+          message: error.message,
+          details: error.details
+        });
+      } else {
+        console.error("Order sync failed:", error);
+      }
+      if (user?.authProvider === "supabase") throw error;
     }
 
     setOrders(prev => {
@@ -166,14 +269,27 @@ export default function App() {
       return updated;
     });
     return order;
-  }, []);
+  }, [user]);
 
   const handleLogout = useCallback(async () => {
-    await store.del("session");
-    setUser(null);
-    setPage("home");
-    showToast("Logged out successfully.", "info");
-  }, [showToast]);
+    try {
+      if (user?.authProvider === "supabase") {
+        const { supabase } = await import("./utils/supabaseClient");
+        const { error } = await supabase.auth.signOut();
+        if (error) throw error;
+      }
+
+      await store.del("session");
+      setUser(null);
+      setPage("home");
+      showToast("Logged out successfully.", "success");
+      return true;
+    } catch (error) {
+      console.error("Logout failed:", error);
+      showToast("Unable to log out. Please try again.", "error");
+      return false;
+    }
+  }, [showToast, user]);
 
   if (loadingApp) {
     return (
@@ -205,6 +321,7 @@ export default function App() {
 
   return (
     <div
+      className={page === "home" ? undefined : "bm-internal-page"}
       style={{
         minHeight: "100vh",
         fontFamily: "'Open Sans', sans-serif"

@@ -1,8 +1,8 @@
 import bcrypt from 'bcryptjs';
 import { User } from '../db.js';
-import { generateToken } from './middleware/auth.js';
-import { userRegister, userLogin } from './middleware/validate.js';
-import { safeText } from './utils.js';
+import { generateToken } from '../middleware/auth.js';
+import { userRegister, userLogin } from '../middleware/validate.js';
+import { safeText } from '../utils.js';
 
 export default function authRoutes(app, authLimiter) {
   app.post('/api/auth/register', authLimiter, userRegister, async (req, res) => {

@@ -1,48 +1,75 @@
 import { Order, Product } from '../db.js';
-import { requireAuth, requireAdmin } from '../middleware/auth.js';
+import { requireOrderAuth, requireAdmin } from '../middleware/auth.js';
 import { orderCreate, orderIdParam, statusUpdate } from '../middleware/validate.js';
 import { safeText, serializeOrder, uploadDesignFile } from '../utils.js';
 import { generateDailyReport, getDefaultReportDate } from '../reportService.js';
 
+const orderOwnershipFilter = user => {
+  if (user.role === 'admin') return {};
+  const filters = [{ customerId: user.id }];
+  if (user.email) {
+    filters.push({ customerEmail: user.email.toLowerCase() });
+  }
+  return { $or: filters };
+};
+
+const bindAuthenticatedEmail = (req, res, next) => {
+  const body = req.body || {};
+  const productId = Number(body.productId);
+  const quantity = Number(body.quantity);
+  const productName = safeText(body.product || body.productName);
+  const unitPrice = Number(body.unitPrice ?? body.price ?? 0);
+  req.body = {
+    ...body,
+    customerName: safeText(body.customerName || body.customer || body.name || req.user.name),
+    customerEmail: req.user.email,
+    contactNumber: safeText(body.contactNumber || body.phone || req.user.phone),
+    items: Array.isArray(body.items) ? body.items : [{ productId, productName, quantity, unitPrice }]
+  };
+  next();
+};
+
 export default function orderRoutes(app) {
-  app.get('/api/orders', async (req, res) => {
-    const email = safeText(req.query.email).toLowerCase();
-    const userId = safeText(req.query.userId);
-
-    const filter = {};
-    if (email) filter.customerEmail = email;
-    if (userId) filter.customerId = userId;
-
-    const orders = await Order.find(filter).sort({ createdAt: -1 });
+  app.get('/api/orders', requireOrderAuth, async (req, res) => {
+    const orders = await Order.find(orderOwnershipFilter(req.user)).sort({ createdAt: -1 });
     res.json({ orders: orders.map(serializeOrder) });
   });
 
-  app.get('/api/orders/:orderId', async (req, res) => {
+  app.get('/api/customers/orders', requireOrderAuth, async (req, res) => {
+    try {
+      const orders = await Order.find(orderOwnershipFilter(req.user)).sort({ createdAt: -1 });
+      res.json({ success: true, count: orders.length, orders: orders.map(serializeOrder) });
+    } catch (error) {
+      console.error('Failed to fetch customer orders:', error);
+      res.status(500).json({ error: 'Unable to fetch customer orders.' });
+    }
+  });
+
+  app.get('/api/customers/orders/:orderId', requireOrderAuth, async (req, res) => {
     const orderId = safeText(req.params.orderId).toUpperCase();
-    const email = safeText(req.query.email).toLowerCase();
-    const order = await Order.findOne({ orderId });
+    const order = await Order.findOne({ orderId, ...orderOwnershipFilter(req.user) });
+    if (!order) return res.status(404).json({ error: 'Order not found.' });
+    return res.json({ success: true, order: serializeOrder(order) });
+  });
 
-    if (!order) {
-      return res.status(404).json({ error: 'Order not found.' });
-    }
+  app.get('/api/orders/:orderId', requireOrderAuth, async (req, res) => {
+    const orderId = safeText(req.params.orderId).toUpperCase();
+    const order = await Order.findOne({ orderId, ...orderOwnershipFilter(req.user) });
 
-    if (email && order.customerEmail.toLowerCase() !== email) {
-      return res.status(403).json({ error: 'Order not available with the provided email.' });
-    }
+    if (!order) return res.status(404).json({ error: 'Order not found.' });
 
     return res.json({ order: serializeOrder(order) });
   });
 
-  app.post('/api/orders', requireAuth, orderCreate, async (req, res) => {
+  app.post('/api/orders', requireOrderAuth, bindAuthenticatedEmail, orderCreate, async (req, res) => {
     try {
       const body = req.body || {};
       const customerName = safeText(body.customer || body.name || body.customerName);
-      const customerEmail = safeText(body.email || body.customerEmail).toLowerCase();
+      const customerEmail = safeText(req.user.email).toLowerCase();
       const contactNumber = safeText(body.phone || body.contactNumber);
       const address = safeText(body.address);
       const paymentMethod = safeText(body.payment || body.paymentMethod);
       const notes = safeText(body.notes);
-      const userId = safeText(body.userId || body.customerId);
       const quantity = Number(body.quantity || 0);
       const productId = Number(body.productId);
       const productName = safeText(body.product || body.productName);
@@ -82,7 +109,7 @@ export default function orderRoutes(app) {
 
       const order = await Order.create({
         orderId,
-        customerId: userId || null,
+        customerId: req.user.id,
         customerName,
         customerEmail,
         contactNumber,

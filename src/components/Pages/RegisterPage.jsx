@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { showToast } from '../../utils/notifications';
 import { store } from '../../utils/storage';
+import { GoogleAuthOption } from '../Common/GoogleAuthOption';
 
 export const RegisterPage = ({ setPage, onLogin, showToast: notify }) => {
   const [form, setForm] = useState({
@@ -11,6 +12,7 @@ export const RegisterPage = ({ setPage, onLogin, showToast: notify }) => {
     confirmPassword: ''
   });
   const [loading, setLoading] = useState(false);
+  const [googleLoading, setGoogleLoading] = useState(false);
 
   const onChange = (e) => {
     const { name, value } = e.target;
@@ -64,12 +66,11 @@ export const RegisterPage = ({ setPage, onLogin, showToast: notify }) => {
   };
 
   return (
-    <div style={{
+    <div className="bm-internal-surface" style={{
       minHeight: 'calc(100vh - 70px)',
       display: 'flex',
       alignItems: 'center',
       justifyContent: 'center',
-      background: '#f3f3f3',
       padding: '32px 16px'
     }}>
       <div style={{
@@ -82,23 +83,23 @@ export const RegisterPage = ({ setPage, onLogin, showToast: notify }) => {
         padding: '28px 26px 20px',
         textAlign: 'center'
       }}>
-        <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 12 }}>
-          <div style={{
-            width: 62,
-            height: 62,
-            borderRadius: '50%',
-            background: '#ffffff',
-            border: '1px solid #d7d7d7',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            fontFamily: 'Georgia, serif',
-            fontWeight: 700,
-            fontSize: 28,
-            color: '#8a1f1f'
-          }}>
-            BM
-          </div>
+        <div style={{
+          width: 90,
+          height: 90,
+          margin: '0 auto 20px',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          overflow: 'hidden',
+          border: '1px solid #ddd',
+          borderRadius: '50%',
+          background: '#fff'
+        }}>
+          <img
+            src="/bm-logo.png"
+            alt="BM Printing Services"
+            style={{ width: '100%', height: '100%', objectFit: 'cover', borderRadius: '50%', display: 'block', flexShrink: 0 }}
+          />
         </div>
 
         <h2 style={{
@@ -219,7 +220,7 @@ export const RegisterPage = ({ setPage, onLogin, showToast: notify }) => {
         <button
           type="button"
           onClick={register}
-          disabled={loading}
+          disabled={loading || googleLoading}
           style={{
             width: '100%',
             background: '#8a1f1f',
@@ -229,13 +230,19 @@ export const RegisterPage = ({ setPage, onLogin, showToast: notify }) => {
             padding: '12px 16px',
             fontSize: 15,
             fontWeight: 600,
-            cursor: loading ? 'not-allowed' : 'pointer',
-            opacity: loading ? 0.8 : 1,
+            cursor: loading || googleLoading ? 'not-allowed' : 'pointer',
+            opacity: loading || googleLoading ? 0.8 : 1,
             marginBottom: 18
           }}
         >
           {loading ? 'Creating account...' : 'Create Account'}
         </button>
+
+        <GoogleAuthOption
+          disabled={loading}
+          onLoadingChange={setGoogleLoading}
+          onError={error => notify?.(error.message || 'Unable to connect with Google. Please try again.', 'error')}
+        />
 
         <div style={{ fontSize: 13, color: '#666' }}>
           Already have an account?{' '}

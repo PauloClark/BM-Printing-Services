@@ -1,5 +1,6 @@
 import express from 'express';
 import cors from 'cors';
+import helmet from 'helmet';
 import dotenv from 'dotenv';
 import path from 'path';
 import fs from 'fs';
@@ -25,9 +26,18 @@ const FRONTEND_ORIGINS = ['http://localhost:3000', 'http://127.0.0.1:3000'];
 
 app.use(express.json({ limit: '50mb' }));
 app.use(cors({ origin: FRONTEND_ORIGINS, credentials: true }));
+app.use(helmet({
+  contentSecurityPolicy: false,
+  crossOriginEmbedderPolicy: false,
+  crossOriginResourcePolicy: { policy: 'cross-origin' }
+}));
 
 function safeText(value) {
   return typeof value === 'string' ? value : '';
+}
+
+function escapeRegex(str) {
+  return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
 const authLimiter = rateLimit({
@@ -667,36 +677,6 @@ app.get('/api/customers/profile', requireAuth, async (req, res) => {
   }
 });
 
-app.get('/api/customers/orders', requireAuth, async (req, res) => {
-  try {
-    const orders = await Order.find({ customerEmail: req.user.email }).sort({ createdAt: -1 });
-    res.json({ success: true, orders: orders.map(serializeOrder) });
-  } catch (error) {
-    console.error('Failed to fetch customer orders:', error);
-    res.status(500).json({ error: 'Unable to fetch customer orders.' });
-  }
-});
-
-app.get('/api/customers/orders/:orderId', requireAuth, async (req, res) => {
-  try {
-    const { orderId } = req.params;
-    const order = await Order.findOne({ orderId });
-
-    if (!order) {
-      return res.status(404).json({ error: 'Order not found.' });
-    }
-
-    if (req.user.role !== 'admin' && order.customerEmail.toLowerCase() !== req.user.email.toLowerCase()) {
-      return res.status(403).json({ error: 'Access denied. This order does not belong to you.' });
-    }
-
-    res.json({ success: true, order: serializeOrder(order) });
-  } catch (error) {
-    console.error('Failed to fetch order details:', error);
-    res.status(500).json({ error: 'Unable to fetch order details.' });
-  }
-});
-
 // ─── PRINTING FILE MANAGEMENT ────────────────────────────────────────────
 
 app.post('/api/files/upload', requireAuth, async (req, res) => {
@@ -1068,14 +1048,15 @@ app.get("/api/search/orders", requireAuth, async (req, res) => {
     const filter = {};
 
     if (query) {
+      const safe = escapeRegex(query);
       filter.$or = [
-        { orderId: { $regex: query, $options: 'i' } },
-        { customerName: { $regex: query, $options: 'i' } }
+        { orderId: { $regex: safe, $options: 'i' } },
+        { customerName: { $regex: safe, $options: 'i' } }
       ];
     }
 
     if (status) filter.status = status;
-    if (customer) filter.customerName = { $regex: customer, $options: 'i' };
+    if (customer) filter.customerName = { $regex: escapeRegex(customer), $options: 'i' };
 
     if (startDate || endDate) {
       filter.createdAt = {};
@@ -1097,10 +1078,11 @@ app.get("/api/search/customers", requireAuth, async (req, res) => {
     const filter = {};
 
     if (query) {
+      const safe = escapeRegex(query);
       filter.$or = [
-        { name: { $regex: query, $options: 'i' } },
-        { email: { $regex: query, $options: 'i' } },
-        { phone: { $regex: query, $options: 'i' } }
+        { name: { $regex: safe, $options: 'i' } },
+        { email: { $regex: safe, $options: 'i' } },
+        { phone: { $regex: safe, $options: 'i' } }
       ];
     }
 
@@ -1567,17 +1549,25 @@ app.get("/api/security/permissions", requireAuth, async (req, res) => {
 });
 
 // Serve uploaded files
-app.get("/uploads/orders/:filename", async (req, res) => {
+app.get("/uploads/orders/:filename", requireAuth, async (req, res) => {
   try {
     const filename = path.basename(req.params.filename);
+    if (filename !== req.params.filename) {
+      return res.status(400).json({ error: 'Invalid filename.' });
+    }
     const filePath = path.join(__dirname, 'uploads', 'orders', filename);
 
-    // Check if file exists
+    // Verify file is within uploads directory (prevent path traversal)
+    const resolved = path.resolve(filePath);
+    const uploadsRoot = path.resolve(__dirname, 'uploads');
+    if (!resolved.startsWith(uploadsRoot)) {
+      return res.status(403).json({ error: 'Access denied.' });
+    }
+
     if (!fs.existsSync(filePath)) {
       return res.status(404).json({ error: 'File not found.' });
     }
 
-    // Determine content type based on extension
     const ext = filename.split('.').pop().toLowerCase();
     const contentTypes = {
       'jpg': 'image/jpeg',

@@ -3,14 +3,15 @@ import { C } from "../../constants/colors";
 import { PRODUCTS, CATEGORIES } from "../../constants/products";
 import { Card } from "../Common/Card";
 import { Btn } from "../Common/Btn";
+import "./ProductsPage.css";
 
-const CATEGORY_ICONS = {
-  "All": "📦",
-  "Clothing & Apparel": "👕",
-  "School Supplies": "🪪",
-  "Tarpaulins & Banners": "🖼️",
-  "Promotional Items": "☕"
-};
+const REMOVED_PRODUCT_NAMES = new Set([
+  "Tote Bag Printing",
+  "Tarpaulin Printing (per sqm)",
+  "Pull-Up / Roll-Up Banner",
+  "Keychain / Button Pin",
+  "Event Backdrop / Streamer"
+]);
 
 export const ProductsPage = ({ setPage, setSelectedProduct }) => {
   const [cat, setCat] = useState("All");
@@ -30,8 +31,9 @@ export const ProductsPage = ({ setPage, setSelectedProduct }) => {
               return {
                 id: dp.id,
                 name: dp.name,
-                price: dp.price,
-                image: dp.image || local?.image || "📦",
+                price: local?.price ?? dp.price,
+                image: local?.image || dp.image || "",
+                imageFit: local?.imageFit || "contain",
                 description: dp.description || local?.description || "",
                 minQty: dp.minQty || local?.minQty || 1,
                 category: dp.category || local?.category || "Printing",
@@ -57,15 +59,15 @@ export const ProductsPage = ({ setPage, setSelectedProduct }) => {
     fetchProducts();
   }, []);
 
-  const displayProducts = dbProducts.length > 0 ? dbProducts : PRODUCTS;
+  const displayProducts = (dbProducts.length > 0 ? dbProducts : PRODUCTS).filter(
+    product => !REMOVED_PRODUCT_NAMES.has(product.name)
+  );
   const filtered = displayProducts.filter(
     p =>
       (cat === "All" || p.category === cat) &&
       (p.name.toLowerCase().includes(search.toLowerCase()) ||
         p.description.toLowerCase().includes(search.toLowerCase()))
   );
-
-  const dynamicCategories = ["All", ...new Set(displayProducts.map(p => p.category).filter(Boolean))];
 
   return (
     <div
@@ -115,7 +117,7 @@ export const ProductsPage = ({ setPage, setSelectedProduct }) => {
           }}
         />
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-          {dynamicCategories.map(c => (
+          {CATEGORIES.map(c => (
             <button
               key={c}
               onClick={() => setCat(c)}
@@ -142,25 +144,19 @@ export const ProductsPage = ({ setPage, setSelectedProduct }) => {
         </div>
       )}
 
-      <div
-        style={{
-          display: "grid",
-          gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))",
-          gap: 20
-        }}
-      >
+      <div className="products-grid">
         {filtered.map(p => (
           <Card
             key={p.id}
-            className="card-hover"
+            className="products-card"
             style={{ position: "relative" }}
           >
             {p.popular && (
               <div
                 style={{
                   position: "absolute",
-                  top: 16,
-                  right: 16,
+                  top: 12,
+                  right: 12,
                   background: C.red,
                   color: "#fff",
                   fontSize: 11,
@@ -172,54 +168,20 @@ export const ProductsPage = ({ setPage, setSelectedProduct }) => {
                 POPULAR
               </div>
             )}
-            {p.image && p.image.startsWith("data:") ? (
-              <div style={{ textAlign: "center", marginBottom: 12 }}>
-                <img src={p.image} alt={p.name} style={{ width: 80, height: 80, objectFit: "contain", borderRadius: 8 }} />
-              </div>
-            ) : (
-              <div style={{ fontSize: 48, marginBottom: 12, textAlign: "center" }}>
-                {p.image || "📦"}
-              </div>
-            )}
-            <div
-              style={{
-                fontSize: 11,
-                color: C.red,
-                fontWeight: 700,
-                textTransform: "uppercase",
-                letterSpacing: 1,
-                marginBottom: 4
-              }}
-            >
-              {p.category}
+            <div className="products-card__image">
+              {p.image && (
+                <img
+                  src={p.image}
+                  alt={`${p.name} product photo`}
+                  style={{ objectFit: p.imageFit || "cover" }}
+                />
+              )}
             </div>
-            <h3
-              style={{
-                fontFamily: "Montserrat",
-                fontWeight: 700,
-                fontSize: 16,
-                marginBottom: 8
-              }}
-            >
-              {p.name}
-            </h3>
-            <p
-              style={{
-                fontSize: 13,
-                color: C.gray600,
-                lineHeight: 1.6,
-                marginBottom: 16
-              }}
-            >
-              {p.description}
-            </p>
-            <div
-              style={{
-                display: "flex",
-                justifyContent: "space-between",
-                alignItems: "flex-end"
-              }}
-            >
+            <div className="products-card__content">
+              <div className="products-card__category">{p.category}</div>
+              <h3 className="products-card__title">{p.name}</h3>
+              <p className="products-card__description">{p.description}</p>
+              <div className="products-card__footer">
               <div>
                 <div
                   style={{
@@ -249,6 +211,7 @@ export const ProductsPage = ({ setPage, setSelectedProduct }) => {
               >
                 Order →
               </Btn>
+              </div>
             </div>
           </Card>
         ))}

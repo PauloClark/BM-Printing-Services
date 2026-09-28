@@ -6,8 +6,11 @@ import { Btn } from "../Common/Btn";
 import { Input } from "../Common/Input";
 
 export const ProfilePage = ({ user, setUser, showToast }) => {
+  const isSupabaseUser = user?.authProvider === "supabase";
+  const profileName = user?.name || user?.user_metadata?.full_name || user?.user_metadata?.name || "";
+  const profileAvatar = user?.avatar || user?.user_metadata?.avatar_url || user?.user_metadata?.picture || "";
   const [form, setForm] = useState({
-    name: user?.name || "",
+    name: profileName,
     phone: user?.phone || "",
     address: user?.address || ""
   });
@@ -17,10 +20,11 @@ export const ProfilePage = ({ user, setUser, showToast }) => {
     confirm: ""
   });
   const [saving, setSaving] = useState(false);
+  const [avatarLoadFailed, setAvatarLoadFailed] = useState(false);
 
   const saveProfile = async () => {
     setSaving(true);
-    const updated = { ...user, ...form };
+    const updated = { ...user, ...form, ...(isSupabaseUser ? { email: user.email } : {}) };
     await store.set(`user:${user.id}`, updated);
     setUser(updated);
     showToast("Profile updated!", "success");
@@ -91,7 +95,17 @@ export const ProfilePage = ({ user, setUser, showToast }) => {
                 fontSize: 28
               }}
             >
-              {user?.name?.[0] || "U"}
+              {isSupabaseUser && profileAvatar && !avatarLoadFailed ? (
+                <img
+                  src={profileAvatar}
+                  alt={`${profileName || "Google"} profile`}
+                  referrerPolicy="no-referrer"
+                  onError={() => setAvatarLoadFailed(true)}
+                  style={{ width: "100%", height: "100%", borderRadius: "50%", objectFit: "cover" }}
+                />
+              ) : (
+                profileName?.[0]?.toUpperCase() || "U"
+              )}
             </div>
             <div>
               <div
@@ -101,7 +115,7 @@ export const ProfilePage = ({ user, setUser, showToast }) => {
                   fontSize: 20
                 }}
               >
-                {user?.name}
+                {profileName}
               </div>
               <div style={{ color: C.gray600 }}>{user?.email}</div>
               <div
@@ -125,6 +139,30 @@ export const ProfilePage = ({ user, setUser, showToast }) => {
               value={form.name}
               onChange={v => setForm(f => ({ ...f, name: v }))}
             />
+            {isSupabaseUser && (
+              <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                <label htmlFor="profile-email" style={{ fontSize: 13, fontWeight: 600, color: C.gray600 }}>
+                  Email Address
+                </label>
+                <input
+                  id="profile-email"
+                  type="email"
+                  value={user.email || ""}
+                  readOnly
+                  aria-readonly="true"
+                  style={{
+                    boxSizing: "border-box",
+                    width: "100%",
+                    padding: "10px 14px",
+                    border: `1.5px solid ${C.gray200}`,
+                    borderRadius: 8,
+                    background: C.gray50,
+                    color: C.gray600,
+                    fontSize: 14
+                  }}
+                />
+              </div>
+            )}
             <Input
               label="Phone Number"
               value={form.phone}
@@ -143,7 +181,7 @@ export const ProfilePage = ({ user, setUser, showToast }) => {
           </div>
         </Card>
 
-        <Card>
+        {!isSupabaseUser && <Card>
           <h3
             style={{
               fontFamily: "Montserrat",
@@ -176,7 +214,7 @@ export const ProfilePage = ({ user, setUser, showToast }) => {
               Update Password
             </Btn>
           </div>
-        </Card>
+        </Card>}
       </div>
     </div>
   );

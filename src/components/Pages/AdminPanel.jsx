@@ -824,7 +824,7 @@ export default function AdminPanel() {
   return (
     <div style={{ display: 'flex', minHeight: 'calc(100vh - 70px)' }}>
       <Sidebar tab={tab} setTab={setTab} sidebarOpen={sidebarOpen} />
-      <div style={{ flex: 1, overflowY: 'auto', background: C.gray50 }}>
+      <div className="bm-admin-surface" style={{ flex: 1, overflowY: 'auto' }}>
         <div style={{ padding: '20px 28px' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 20 }}>
             <button onClick={() => setSidebarOpen(!sidebarOpen)} style={{ background: 'none', border: 'none', fontSize: 20, cursor: 'pointer', color: C.gray600 }}>☰</button>

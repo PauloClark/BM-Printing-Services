@@ -9,23 +9,41 @@ export function safeText(value) {
   return typeof value === 'string' ? value : '';
 }
 
+export function escapeRegex(str) {
+  return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
 export function serializeOrder(order) {
   const firstItem = order.items?.[0] || {};
+  const date = order.createdAt ? new Date(order.createdAt).toISOString().split('T')[0] : '';
   return {
     id: order.orderId,
     orderId: order.orderId,
+    customer: order.customerName,
     customerName: order.customerName,
+    email: order.customerEmail,
     customerEmail: order.customerEmail,
+    phone: order.contactNumber,
     contactNumber: order.contactNumber,
     address: order.address,
+    product: firstItem.productName || firstItem.name || '',
+    productId: firstItem.productId || null,
+    quantity: firstItem.quantity || 0,
     items: order.items || [],
+    total: order.totalAmount,
     totalAmount: order.totalAmount,
+    payment: order.paymentMethod,
     paymentMethod: order.paymentMethod,
     status: order.status,
     notes: order.notes,
     designNotes: order.designNotes,
     designFilePath: order.designFilePath,
     designFileName: order.designFileName,
+    designFileType: order.designFileType,
+    designFileSize: order.designFileSize,
+    specs: order.notes || '',
+    userId: order.customerId,
+    date,
     createdAt: order.createdAt,
     completedAt: order.completedAt,
     serviceName: firstItem.productName || firstItem.name || 'N/A'

@@ -13,39 +13,44 @@ export const MyOrdersPage = ({ orders, user, setPage, showToast }) => {
   const [submittingReview, setSubmittingReview] = useState(false);
   const [myOrders, setMyOrders] = useState([]);
   const [loadingOrders, setLoadingOrders] = useState(true);
+  const [ordersError, setOrdersError] = useState("");
 
   useEffect(() => {
+    let active = true;
     const fetchMyOrders = async () => {
       setLoadingOrders(true);
+      setOrdersError("");
       try {
-        const raw = localStorage.getItem('session');
-        const session = raw ? JSON.parse(raw) : null;
-        const token = session?.token;
-        if (!token) {
-          setMyOrders(orders.filter(o => o.email === user?.email || o.userId === user?.id));
-          setLoadingOrders(false);
-          return;
+        let token = user?.token || "";
+        if (user?.authProvider === "supabase") {
+          const { supabase } = await import("../../utils/supabaseClient");
+          const { data, error } = await supabase.auth.getSession();
+          if (error) throw error;
+          token = data.session?.access_token || "";
+        } else if (!token) {
+          const session = await store.get("session");
+          token = session?.token || "";
         }
+
+        if (!token) throw new Error("Please login to view your orders.");
         const response = await fetch('/api/customers/orders', {
           headers: { 'Authorization': `Bearer ${token}` }
         });
-        if (response.ok) {
-          const data = await response.json();
-          if (data.success && Array.isArray(data.orders)) {
-            setMyOrders(data.orders);
-          } else {
-            setMyOrders(orders.filter(o => o.email === user?.email || o.userId === user?.id));
-          }
-        } else {
-          setMyOrders(orders.filter(o => o.email === user?.email || o.userId === user?.id));
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(data.error || "Unable to load your orders.");
+        if (active) setMyOrders(Array.isArray(data.orders) ? data.orders : []);
+      } catch (error) {
+        if (active) {
+          setMyOrders([]);
+          setOrdersError(error.message || "Unable to load your orders.");
         }
-      } catch {
-        setMyOrders(orders.filter(o => o.email === user?.email || o.userId === user?.id));
+      } finally {
+        if (active) setLoadingOrders(false);
       }
-      setLoadingOrders(false);
     };
     fetchMyOrders();
-  }, [orders, user]);
+    return () => { active = false; };
+  }, [user]);
 
   const submitReview = async () => {
     if (!review.comment.trim()) {
@@ -89,7 +94,15 @@ export const MyOrdersPage = ({ orders, user, setPage, showToast }) => {
         My Orders
       </h1>
 
-      {myOrders.length === 0 ? (
+      {loadingOrders ? (
+        <Card style={{ textAlign: "center", padding: 40, color: C.gray400 }}>
+          Loading your orders...
+        </Card>
+      ) : ordersError ? (
+        <Card role="alert" style={{ textAlign: "center", padding: 40, color: C.gray600 }}>
+          {ordersError}
+        </Card>
+      ) : myOrders.length === 0 ? (
         <Card
           style={{
             textAlign: "center",
@@ -97,9 +110,12 @@ export const MyOrdersPage = ({ orders, user, setPage, showToast }) => {
             color: C.gray400
           }}
         >
-          You haven't placed any orders yet.
+          <h2 style={{ color: C.gray800, fontFamily: "Montserrat", fontSize: 20, margin: "0 0 8px" }}>
+            No orders yet
+          </h2>
+          <p style={{ margin: 0 }}>Your orders will appear here after you place your first order.</p>
           <div style={{ marginTop: 16 }}>
-            <Btn onClick={() => setPage("products")}>Browse Products</Btn>
+            <Btn onClick={() => setPage("order")}>Place an Order</Btn>
           </div>
         </Card>
       ) : (

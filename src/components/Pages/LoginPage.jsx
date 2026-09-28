@@ -1,10 +1,12 @@
 import React, { useState } from 'react';
 import { store } from '../../utils/storage';
+import { GoogleAuthOption } from '../Common/GoogleAuthOption';
 
 export const LoginPage = ({ setPage, onLogin, showToast }) => {
   const [email, setEmail] = useState('');
   const [pass, setPass] = useState('');
   const [loading, setLoading] = useState(false);
+  const [googleLoading, setGoogleLoading] = useState(false);
 
   const login = async () => {
     setLoading(true);
@@ -40,12 +42,11 @@ export const LoginPage = ({ setPage, onLogin, showToast }) => {
   };
 
   return (
-    <div style={{
+    <div className="bm-internal-surface" style={{
       minHeight: 'calc(100vh - 70px)',
       display: 'flex',
       alignItems: 'center',
       justifyContent: 'center',
-      background: '#f3f3f3',
       padding: '32px 16px'
     }}>
       <div style={{
@@ -58,23 +59,23 @@ export const LoginPage = ({ setPage, onLogin, showToast }) => {
         padding: '28px 26px 20px',
         textAlign: 'center'
       }}>
-        <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 12 }}>
-          <div style={{
-            width: 62,
-            height: 62,
-            borderRadius: '50%',
-            background: '#ffffff',
-            border: '1px solid #d7d7d7',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            fontFamily: 'Georgia, serif',
-            fontWeight: 700,
-            fontSize: 28,
-            color: '#8a1f1f'
-          }}>
-            BM
-          </div>
+        <div style={{
+          width: 90,
+          height: 90,
+          margin: '0 auto 20px',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          overflow: 'hidden',
+          border: '1px solid #ddd',
+          borderRadius: '50%',
+          background: '#fff'
+        }}>
+          <img
+            src="/bm-logo.png"
+            alt="BM Printing Services"
+            style={{ width: '100%', height: '100%', objectFit: 'cover', borderRadius: '50%', display: 'block', flexShrink: 0 }}
+          />
         </div>
 
         <h2 style={{
@@ -141,7 +142,7 @@ export const LoginPage = ({ setPage, onLogin, showToast }) => {
         <button
           type="button"
           onClick={login}
-          disabled={loading}
+          disabled={loading || googleLoading}
           style={{
             width: '100%',
             background: '#8a1f1f',
@@ -158,6 +159,12 @@ export const LoginPage = ({ setPage, onLogin, showToast }) => {
         >
           {loading ? 'Logging in...' : 'Login'}
         </button>
+
+        <GoogleAuthOption
+          disabled={loading}
+          onLoadingChange={setGoogleLoading}
+          onError={error => showToast?.(error.message || 'Unable to connect with Google. Please try again.', 'error')}
+        />
 
         <div style={{ fontSize: 13, color: '#666' }}>
           Don&apos;t have an account?{' '}

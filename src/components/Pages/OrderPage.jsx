@@ -1,92 +1,272 @@
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect } from "react";
 import { C } from "../../constants/colors";
 import { PRODUCTS, PAYMENT_METHODS, STATUS_LIST } from "../../constants/products";
 import { generateId } from "../../utils/helpers";
 import { Card } from "../Common/Card";
 import { Btn } from "../Common/Btn";
 import { Input } from "../Common/Input";
+import "./OrderPage.css";
 
-const fileToBase64 = (file) => {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.readAsDataURL(file);
-    reader.onload = () => resolve(reader.result);
-    reader.onerror = reject;
-  });
+const REMOVED_PRODUCT_NAMES = new Set([
+  "Tote Bag Printing",
+  "Tarpaulin Printing (per sqm)",
+  "Pull-Up / Roll-Up Banner",
+  "Keychain / Button Pin",
+  "Event Backdrop / Streamer"
+]);
+
+const SPECIFICATION_LABELS = {
+  size: "Size",
+  idStyle: "ID type/style",
+  width: "Width",
+  height: "Height",
+  unit: "Unit",
+  orientation: "Orientation",
+  printSide: "Print side",
+  shape: "Shape"
 };
+
+const getSpecificationType = product => {
+  const name = product?.name?.toLowerCase() || "";
+  if (/t-shirt|polo shirt|hoodie|jacket/.test(name) || product?.category === "Clothing & Apparel") return "clothing";
+  if (name.includes("school id")) return "schoolId";
+  if (name.includes("mug")) return "mug";
+  if (name.includes("sticker")) return "sticker";
+  if (name.includes("event backdrop") || name.includes("streamer")) return "backdrop";
+  if (name.includes("banner") || name.includes("poster")) return "banner";
+  return "general";
+};
+
+const SPECIFICATION_KEYS = {
+  clothing: ["size"],
+  schoolId: ["idStyle"],
+  banner: ["width", "height", "unit", "orientation"],
+  mug: ["printSide"],
+  sticker: ["width", "height", "unit", "shape"],
+  backdrop: ["width", "height", "unit"],
+  general: []
+};
+
+const isProductImage = source =>
+  typeof source === "string" && /^(\/|https?:\/\/|data:image\/)/i.test(source);
+
+const normalizePhone = value => value.replace(/[\s()-]/g, "");
+
+const validateCustomerInfo = (form, fulfillmentMethod) => {
+  const errors = {};
+  const name = form.name.trim().replace(/\s+/g, " ");
+  const email = form.email.trim();
+  const phone = normalizePhone(form.phone);
+
+  if (!name) errors.name = "Enter your full name.";
+  if (!email) {
+    errors.email = "Enter your email address.";
+  } else if (!/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email)) {
+    errors.email = "Enter a valid email address, such as juan@email.com.";
+  }
+  if (!phone) {
+    errors.phone = "Enter your Philippine mobile number.";
+  } else if (!/^(09\d{9}|\+639\d{9})$/.test(phone)) {
+    errors.phone = "Use a Philippine mobile number like 09XXXXXXXXX or +639XXXXXXXXX.";
+  }
+  if (fulfillmentMethod === "delivery" && !form.address.trim()) {
+    errors.address = "Enter the delivery address.";
+  }
+
+  return errors;
+};
+
+const CustomerField = ({
+  id,
+  label,
+  value,
+  onChange,
+  placeholder,
+  required,
+  error,
+  inputRef,
+  type = "text",
+  inputMode,
+  autoComplete,
+  maxLength,
+  className = ""
+}) => (
+  <div className={`order-step1__field ${className}`}>
+    <label className="order-step1__label" htmlFor={id}>
+      {label}{required && <span className="order-step1__required"> *</span>}
+    </label>
+    <input
+      ref={inputRef}
+      id={id}
+      className="order-step1__input"
+      type={type}
+      inputMode={inputMode}
+      autoComplete={autoComplete}
+      value={value}
+      onChange={onChange}
+      placeholder={placeholder}
+      required={required}
+      maxLength={maxLength}
+      aria-invalid={Boolean(error)}
+      aria-describedby={error ? `${id}-error` : undefined}
+    />
+    {error && <p className="order-step1__error" id={`${id}-error`} role="alert">{error}</p>}
+  </div>
+);
 
 export const OrderPage = ({ user, selectedProduct, setPage, addOrder, showToast }) => {
   const [step, setStep] = useState(1);
   const [loading, setLoading] = useState(false);
+  const [fulfillmentMethod, setFulfillmentMethod] = useState("delivery");
+  const [step1Errors, setStep1Errors] = useState({});
+  const [catalogProducts, setCatalogProducts] = useState(() => {
+    const fallbackProducts = PRODUCTS.filter(product => !REMOVED_PRODUCT_NAMES.has(product.name));
+    return selectedProduct && !REMOVED_PRODUCT_NAMES.has(selectedProduct.name)
+      ? [selectedProduct, ...fallbackProducts.filter(product => product.id !== selectedProduct.id)]
+      : fallbackProducts;
+  });
+  const [step2Attempted, setStep2Attempted] = useState(false);
   const [form, setForm] = useState({
     name: user?.name || "",
     email: user?.email || "",
     phone: user?.phone || "",
-    address: "",
-    productId: selectedProduct?.id || "",
-    quantity: selectedProduct?.minQty || 1,
+    address: user?.address || "",
+    productId: selectedProduct && !REMOVED_PRODUCT_NAMES.has(selectedProduct.name) ? selectedProduct.id : "",
+    quantity: 1,
     specs: "",
-    design: "",
+    specificationDetails: {},
+    specialInstructions: "",
     paymentMethod: "",
     notes: ""
   });
   const [submitted, setSubmitted] = useState(null);
-  const [selectedFile, setSelectedFile] = useState(null);
-  const [fileError, setFileError] = useState("");
-  const fileInputRef = useRef(null);
+  const nameInputRef = useRef(null);
+  const emailInputRef = useRef(null);
+  const phoneInputRef = useRef(null);
+  const addressInputRef = useRef(null);
+  const productSelectRef = useRef(null);
+  const quantityInputRef = useRef(null);
 
-  const product = selectedProduct ||
-    PRODUCTS.find(p => p.id === Number(form.productId)) ||
-    (form.productId ? PRODUCTS.find(p => p.name === form.productId) : null);
-  const total = product ? product.price * Number(form.quantity) : 0;
+  useEffect(() => {
+    if (!user) return;
+    setForm(current => ({
+      ...current,
+      name: current.name || user.name || "",
+      email: current.email || user.email || "",
+      phone: current.phone || user.phone || "",
+      address: current.address || user.address || ""
+    }));
+  }, [user]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const loadActiveProducts = async () => {
+      try {
+        const response = await fetch("/api/products");
+        if (!response.ok) return;
+        const data = await response.json();
+        if (!Array.isArray(data.products) || data.products.length === 0) return;
+
+        const activeProducts = data.products
+          .filter(item => !REMOVED_PRODUCT_NAMES.has(item.name))
+          .map(item => {
+            const local = PRODUCTS.find(product => Number(product.id) === Number(item.id));
+            return {
+              ...local,
+              ...item,
+              id: item.id ?? local?.id,
+              name: item.name,
+              price: Number(local?.price ?? item.price ?? 0),
+              minQty: 1,
+              category: item.category || local?.category || "Printing",
+              unit: local?.unit || "per piece",
+              image: local?.image || (isProductImage(item.image) ? item.image : ""),
+              popular: local?.popular || false
+            };
+          });
+
+        if (!cancelled) setCatalogProducts(activeProducts);
+      } catch {
+        // Keep the local catalog available when the products API is offline.
+      }
+    };
+
+    loadActiveProducts();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const product = catalogProducts.find(item => String(item.id) === String(form.productId)) ||
+    catalogProducts.find(item => item.name === form.productId) || null;
+  const productSpecType = getSpecificationType(product);
+  const quantityText = String(form.quantity ?? "");
+  const quantityValue = Number(quantityText);
+  const quantityError = !quantityText.trim()
+    ? "Enter a quantity of at least 1."
+    : !/^\d+$/.test(quantityText) || !Number.isSafeInteger(quantityValue)
+      ? "Enter a whole-number quantity of at least 1."
+      : quantityValue < 1
+        ? "Quantity must be at least 1."
+        : "";
+  const total = product ? product.price * Math.max(0, quantityValue || 0) : 0;
   const f = (k, v) => setForm(prev => ({ ...prev, [k]: v }));
-
-  const handleFileChange = async (e) => {
-    const file = e.target.files?.[0];
-    if (!file) {
-      setSelectedFile(null);
-      setFileError("");
-      return;
-    }
-
-    // Client-side type check
-    const allowedTypes = ["image/jpeg", "image/png", "image/webp", "application/pdf", "image/svg+xml"];
-    const maxSize = 10 * 1024 * 1024; // 10MB
-
-    if (!allowedTypes.includes(file.type) && !file.name.match(/\.(jpe?g|png|webp|pdf|svg)$/i)) {
-      setFileError("Invalid file type. Please upload JPG, PNG, WEBP, PDF, or SVG.");
-      setSelectedFile(null);
-      return;
-    }
-
-    if (file.size > maxSize) {
-      setFileError("File is too large. Maximum file size is 10 MB.");
-      setSelectedFile(null);
-      return;
-    }
-
-    try {
-      const base64 = await fileToBase64(file);
-      setFileError("");
-      setSelectedFile({
-        file,
-        base64,
-        name: file.name,
-        type: file.type,
-        size: file.size
-      });
-    } catch (error) {
-      setFileError("Failed to read file.");
-      setSelectedFile(null);
+  const updateSpecification = (key, value) => {
+    setForm(prev => ({
+      ...prev,
+      specificationDetails: { ...prev.specificationDetails, [key]: value }
+    }));
+  };
+  const updateStep1Field = (key, value) => {
+    const nextForm = { ...form, [key]: value };
+    setForm(nextForm);
+    if (Object.keys(step1Errors).length > 0) {
+      setStep1Errors(validateCustomerInfo(nextForm, fulfillmentMethod));
     }
   };
 
-  const clearFile = () => {
-    setSelectedFile(null);
-    setFileError("");
-    if (fileInputRef.current) {
-      fileInputRef.current.value = "";
+  const handleStep1Next = () => {
+    const normalizedForm = {
+      ...form,
+      name: form.name.trim().replace(/\s+/g, " "),
+      email: form.email.trim(),
+      phone: normalizePhone(form.phone),
+      address: form.address.trim()
+    };
+    const errors = validateCustomerInfo(normalizedForm, fulfillmentMethod);
+    setForm(normalizedForm);
+    setStep1Errors(errors);
+
+    const firstInvalidField = ["name", "email", "phone", "address"].find(key => errors[key]);
+    if (firstInvalidField) {
+      const refs = {
+        name: nameInputRef,
+        email: emailInputRef,
+        phone: phoneInputRef,
+        address: addressInputRef
+      };
+      const input = refs[firstInvalidField].current;
+      input?.focus({ preventScroll: true });
+      input?.scrollIntoView({ behavior: "smooth", block: "center" });
+      return;
     }
+
+    setStep(2);
+  };
+
+  const handleStep2Next = () => {
+    setStep2Attempted(true);
+    if (!product) {
+      productSelectRef.current?.focus();
+      productSelectRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+      return;
+    }
+    if (quantityError) {
+      quantityInputRef.current?.focus();
+      quantityInputRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+      return;
+    }
+    setStep(3);
   };
 
   const handleSubmit = async () => {
@@ -95,26 +275,27 @@ export const OrderPage = ({ user, selectedProduct, setPage, addOrder, showToast 
       return;
     }
     setLoading(true);
-    let designFileData = null;
-    if (selectedFile && selectedFile.base64) {
-      designFileData = {
-        base64: selectedFile.base64.replace(/^data:[^;]+;base64,/, ''),
-        originalName: selectedFile.name,
-        fileType: selectedFile.type,
-        fileSize: selectedFile.size
-      };
-    }
+    const specificationLines = (SPECIFICATION_KEYS[productSpecType] || [])
+      .filter(key => String(form.specificationDetails[key] || "").trim())
+      .map(key => `${SPECIFICATION_LABELS[key]}: ${String(form.specificationDetails[key]).trim()}`);
+    const orderSpecs = [
+      String(form.specs || "").trim(),
+      ...specificationLines,
+      String(form.specialInstructions || "").trim()
+        ? `Special Instructions: ${String(form.specialInstructions).trim()}`
+        : ""
+    ].filter(Boolean).join("\n");
     const order = {
       id: "ORD-" + generateId(),
       customer: form.name,
       email: form.email,
       phone: form.phone,
-      address: form.address,
+      address: fulfillmentMethod === "pickup" ? "Pickup" : form.address.trim(),
       product: product.name,
       productId: product.id,
       quantity: Number(form.quantity),
-      specs: form.specs,
-      design: form.design,
+      specs: orderSpecs,
+      designNotes: orderSpecs,
       payment: form.paymentMethod,
       total,
       unitPrice: product.price,
@@ -123,13 +304,17 @@ export const OrderPage = ({ user, selectedProduct, setPage, addOrder, showToast 
       date: new Date().toISOString().split("T")[0],
       notes: form.notes,
       userId: user?.id,
-      createdAt: Date.now(),
-      designFile: designFileData
+      createdAt: Date.now()
     };
-    const createdOrder = await addOrder(order);
-    setSubmitted(createdOrder || order);
-    showToast("🎉 Order placed successfully!", "success");
-    setLoading(false);
+    try {
+      const createdOrder = await addOrder(order);
+      setSubmitted(createdOrder || order);
+      showToast("🎉 Order placed successfully!", "success");
+    } catch (error) {
+      showToast(error.message || "Unable to place your order. Please try again.", "error");
+    } finally {
+      setLoading(false);
+    }
   };
 
   if (submitted) {
@@ -367,208 +552,223 @@ export const OrderPage = ({ user, selectedProduct, setPage, addOrder, showToast 
 
       <Card>
         {step === 1 && (
-          <div style={{ display: "flex", flexDirection: "column", gap: 18 }}>
+          <div className="order-step1">
             <h3 style={{ fontFamily: "Montserrat", fontWeight: 700 }}>
               Customer Information
             </h3>
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
-              <Input
+            <div className="order-step1__grid">
+              <CustomerField
+                id="customer-name"
                 label="Full Name"
                 value={form.name}
-                onChange={v => f("name", v)}
+                inputRef={nameInputRef}
+                onChange={e => updateStep1Field("name", e.target.value)}
                 placeholder="Juan dela Cruz"
                 required
+                error={step1Errors.name}
               />
-              <Input
+              <CustomerField
+                id="customer-email"
                 label="Email Address"
-                type="email"
+                inputMode="email"
+                autoComplete="email"
                 value={form.email}
-                onChange={v => f("email", v)}
+                inputRef={emailInputRef}
+                onChange={e => updateStep1Field("email", e.target.value)}
                 placeholder="juan@email.com"
                 required
+                error={step1Errors.email}
               />
-            </div>
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
-              <Input
+              <CustomerField
+                id="customer-phone"
                 label="Phone Number"
+                type="tel"
+                inputMode="tel"
+                autoComplete="tel"
+                maxLength={20}
                 value={form.phone}
-                onChange={v => f("phone", v)}
+                inputRef={phoneInputRef}
+                onChange={e => updateStep1Field("phone", e.target.value.replace(/[^\d+()\s-]/g, ""))}
                 placeholder="09XXXXXXXXX"
                 required
+                error={step1Errors.phone}
               />
-              <Input
-                label="Address (for delivery)"
-                value={form.address}
-                onChange={v => f("address", v)}
-                placeholder="Barangay, City, Province"
-              />
-            </div>
-            <div style={{ display: "flex", justifyContent: "flex-end" }}>
-              <Btn
-                onClick={() => {
-                  if (!form.name || !form.email || !form.phone) {
-                    showToast("Please fill required fields", "error");
-                    return;
-                  }
-                  setStep(2);
-                }}
-              >
-                Next →
-              </Btn>
+              <fieldset className="order-step1__fulfillment">
+                <legend>Fulfillment Method<span className="order-step1__required"> *</span></legend>
+                <div className="order-step1__radio-options">
+                  <label className="order-step1__radio">
+                    <input
+                      type="radio"
+                      name="fulfillmentMethod"
+                      value="pickup"
+                      checked={fulfillmentMethod === "pickup"}
+                      onChange={() => setFulfillmentMethod("pickup")}
+                    />
+                    <span>Pickup</span>
+                  </label>
+                  <label className="order-step1__radio">
+                    <input
+                      type="radio"
+                      name="fulfillmentMethod"
+                      value="delivery"
+                      checked={fulfillmentMethod === "delivery"}
+                      onChange={() => setFulfillmentMethod("delivery")}
+                    />
+                    <span>Delivery</span>
+                  </label>
+                </div>
+              </fieldset>
+              {fulfillmentMethod === "delivery" ? (
+                <CustomerField
+                  id="customer-address"
+                  className="order-step1__field--wide"
+                  label="Delivery / Pickup Address"
+                  autoComplete="street-address"
+                  value={form.address}
+                  inputRef={addressInputRef}
+                  onChange={e => updateStep1Field("address", e.target.value)}
+                  placeholder="Barangay, City, Province"
+                  required
+                  error={step1Errors.address}
+                />
+              ) : (
+                <div className="order-step1__pickup-note" role="status">
+                  Pickup selected. You will collect your order in person; an address is not needed.
+                </div>
+              )}
+              <div className="order-step1__actions">
+                <Btn onClick={handleStep1Next}>Next →</Btn>
+              </div>
             </div>
           </div>
         )}
 
         {step === 2 && (
-          <div style={{ display: "flex", flexDirection: "column", gap: 18 }}>
-            <h3 style={{ fontFamily: "Montserrat", fontWeight: 700 }}>
-              Product & Specifications
-            </h3>
-            <Input
-              label="Select Product"
-              type="select"
-              value={product?.name || ""}
-              onChange={v => {
-                const p = PRODUCTS.find(x => x.name === v);
-                f("productId", p?.id || "");
-                f("quantity", p?.minQty || 1);
-              }}
-              options={PRODUCTS.map(p => p.name)}
-              required
-            />
-            {product && (
-              <div
-                style={{
-                  background: C.gray50,
-                  borderRadius: 8,
-                  padding: "12px 16px",
-                  fontSize: 13,
-                  color: C.gray600
-                }}
-              >
-                <strong>{product.image} {product.name}</strong> — ₱
-                {product.price.toLocaleString()} {product.unit} · Min. qty:{" "}
-                {product.minQty}
-              </div>
-            )}
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
-              <Input
-                label="Quantity *"
-                type="number"
-                min={product?.minQty || 1}
-                value={form.quantity}
-                onChange={v => f("quantity", v)}
-              />
-              <div style={{ display: "flex", flexDirection: "column", justifyContent: "flex-end" }}>
-                <div
-                  style={{
-                    fontFamily: "Montserrat",
-                    fontWeight: 800,
-                    fontSize: 24,
-                    color: C.red
-                  }}
-                >
-                  ₱{total.toLocaleString()}
+          <div className="order-step2">
+            <section className="order-step2__section">
+              <h3>Product</h3>
+              <div className="order-step2__product-grid">
+                <div className="order-step2__field">
+                  <label htmlFor="order-product">Select Product <span>*</span></label>
+                  <select
+                    id="order-product"
+                    ref={productSelectRef}
+                    className="order-step2__control"
+                    value={product ? String(product.id) : ""}
+                    onChange={event => {
+                      const selected = catalogProducts.find(item => String(item.id) === event.target.value);
+                      f("productId", selected?.id || "");
+                      f("quantity", 1);
+                    }}
+                    required
+                    aria-invalid={step2Attempted && !product}
+                    aria-describedby={step2Attempted && !product ? "order-product-error" : undefined}
+                  >
+                    <option value="">Select a product</option>
+                    {catalogProducts.map(item => (
+                      <option key={item.id} value={item.id}>{item.name}</option>
+                    ))}
+                  </select>
+                  {step2Attempted && !product && (
+                    <p className="order-step2__error" id="order-product-error">Select a product to continue.</p>
+                  )}
                 </div>
-                <div style={{ fontSize: 12, color: C.gray400 }}>
-                  Estimated Total
-                </div>
-              </div>
-            </div>
-            <Input
-              label="Print Specifications"
-              type="textarea"
-              value={form.specs}
-              onChange={v => f("specs", v)}
-              placeholder="Size, color, placement, quantity per design, etc."
-              rows={4}
-            />
-            <Input
-              label="Design Notes / File Description"
-              type="textarea"
-              value={form.design}
-              onChange={v => f("design", v)}
-              placeholder="Will email via JPG, Canva link, etc."
-              rows={3}
-            />
-
-            {selectedFile && selectedFile.file && (
-              <div style={{ marginTop: 12 }}>
-                <div style={{ fontSize: 12, color: C.gray600 }}>
-                  Selected: {selectedFile.name}
-                </div>
-                {selectedFile.type.startsWith("image/") && (
-                  <div style={{ textAlign: "center", margin: "8px 0" }}>
-                    <img
-                      src={selectedFile.base64}
-                      alt="Preview"
-                      style={{
-                        maxWidth: 120,
-                        maxHeight: 120,
-                        borderRadius: 4,
-                        objectFit: "contain"
-                      }}
-                    />
+                {product && (
+                  <div className="order-step2__product-summary">
+                    {isProductImage(product.image) && (
+                      <img src={product.image} alt={product.name} />
+                    )}
+                    <div className="order-step2__product-info">
+                      <strong>{product.name}</strong>
+                      <span>₱{Number(product.price).toLocaleString()} {product.unit || "per piece"}</span>
+                    </div>
                   </div>
                 )}
-                <div style={{ fontSize: 12, color: C.gray600 }}>
-                  File Size: {(selectedFile.size / 1024 / 1024).toFixed(1)} MB
+              </div>
+              <div className="order-step2__quantity-grid">
+                <div className="order-step2__field">
+                  <label htmlFor="order-quantity">Quantity <span>*</span></label>
+                  <input
+                    id="order-quantity"
+                    ref={quantityInputRef}
+                    className="order-step2__control"
+                    type="number"
+                    inputMode="numeric"
+                    min={1}
+                    step="1"
+                    value={form.quantity}
+                    onChange={event => f("quantity", event.target.value)}
+                    required
+                    aria-invalid={step2Attempted && Boolean(quantityError)}
+                    aria-describedby={step2Attempted && quantityError ? "order-quantity-error" : undefined}
+                  />
+                  {step2Attempted && quantityError && (
+                    <p className="order-step2__error" id="order-quantity-error">{quantityError}</p>
+                  )}
                 </div>
-                <button
-                  onClick={clearFile}
-                  style={{
-                    marginTop: 4,
-                    background: "none",
-                    border: "1px solid #dc3545",
-                    color: "#dc3545",
-                    padding: "4px 8px",
-                    borderRadius: 4,
-                    fontSize: 12,
-                    cursor: "pointer"
-                  }}
-                >
-                  Remove File
-                </button>
               </div>
-            )}
+            </section>
 
-            {fileError && (
-              <div style={{ marginTop: 8, color: "#dc3545", fontSize: 12 }}>
-                {fileError}
+            <section className="order-step2__section">
+              <h3>Printing Specifications</h3>
+              {productSpecType === "clothing" && (
+                <div className="order-step2__fields">
+                  <Input label="Size" type="select" value={form.specificationDetails.size || ""} onChange={value => updateSpecification("size", value)} options={["XS", "Small", "Medium", "Large", "XL", "2XL", "3XL"]} />
+                </div>
+              )}
+              {productSpecType === "schoolId" && (
+                <div className="order-step2__fields">
+                  <Input label="ID Type / Style" value={form.specificationDetails.idStyle || ""} onChange={value => updateSpecification("idStyle", value)} placeholder="e.g. school ID, PVC, lanyard style" />
+                </div>
+              )}
+              {(productSpecType === "banner" || productSpecType === "backdrop") && (
+                <div className="order-step2__fields">
+                  <Input label="Width" type="number" min="0" step="any" value={form.specificationDetails.width || ""} onChange={value => updateSpecification("width", value)} placeholder="Width" />
+                  <Input label="Height" type="number" min="0" step="any" value={form.specificationDetails.height || ""} onChange={value => updateSpecification("height", value)} placeholder="Height" />
+                  <Input label="Unit" type="select" value={form.specificationDetails.unit || ""} onChange={value => updateSpecification("unit", value)} options={["inches", "feet"]} />
+                  {productSpecType === "banner" && (
+                    <Input label="Orientation" type="select" value={form.specificationDetails.orientation || ""} onChange={value => updateSpecification("orientation", value)} options={["Portrait", "Landscape"]} />
+                  )}
+                </div>
+              )}
+              {productSpecType === "mug" && (
+                <div className="order-step2__fields">
+                  <Input label="Print Side" type="select" value={form.specificationDetails.printSide || ""} onChange={value => updateSpecification("printSide", value)} options={["One Side", "Both Sides", "Wrap Around"]} />
+                </div>
+              )}
+              {productSpecType === "sticker" && (
+                <div className="order-step2__fields">
+                  <Input label="Width" type="number" min="0" step="any" value={form.specificationDetails.width || ""} onChange={value => updateSpecification("width", value)} placeholder="Width" />
+                  <Input label="Height" type="number" min="0" step="any" value={form.specificationDetails.height || ""} onChange={value => updateSpecification("height", value)} placeholder="Height" />
+                  <Input label="Unit" type="select" value={form.specificationDetails.unit || ""} onChange={value => updateSpecification("unit", value)} options={["cm", "inches"]} />
+                  <Input label="Shape" type="select" value={form.specificationDetails.shape || ""} onChange={value => updateSpecification("shape", value)} options={["Square", "Rectangle", "Circle", "Custom"]} />
+                </div>
+              )}
+            </section>
+
+            <section className="order-step2__section">
+              <h3>Special Instructions</h3>
+              <Input
+                label="Special Instructions (optional)"
+                type="textarea"
+                value={form.specialInstructions}
+                onChange={value => f("specialInstructions", value)}
+                placeholder="Tell us about your preferred colors, placement, text, or other printing details..."
+                rows={4}
+              />
+            </section>
+
+            <section className="order-step2__total">
+              <h3>Total Price</h3>
+              <div>
+                <span>{product ? `₱${Number(product.price).toLocaleString()} × ${quantityText || 0} ${product.unit || "per piece"}` : "Select a product"}</span>
+                <strong>₱{total.toLocaleString()}</strong>
               </div>
-            )}
+            </section>
 
-            <input
-              type="file"
-              accept=".jpg,.jpeg,.png,.webp,.pdf,.svg"
-              onChange={handleFileChange}
-              style={{ display: "none" }}
-              ref={fileInputRef}
-            />
-            <Btn
-              variant="ghost"
-              size="sm"
-              style={{ marginTop: 4 }}
-              onClick={() => fileInputRef.current?.click()}
-            >
-              Upload File
-            </Btn>
-
-            <div style={{ display: "flex", justifyContent: "space-between" }}>
-              <Btn variant="ghost" onClick={() => setStep(1)}>
-                ← Back
-              </Btn>
-              <Btn
-                onClick={() => {
-                  if (!product) {
-                    showToast("Please select a product", "error");
-                    return;
-                  }
-                  setStep(3);
-                }}
-              >
-                Next →
-              </Btn>
+            <div className="order-step2__actions">
+              <Btn variant="ghost" onClick={() => setStep(1)}>← Back</Btn>
+              <Btn onClick={handleStep2Next}>Next →</Btn>
             </div>
           </div>
         )}
