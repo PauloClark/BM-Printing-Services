@@ -6,7 +6,7 @@ A full-stack printing business management system built with React, Express, and 
 
 - **Customer Portal**: Browse products, place orders, track order status, leave reviews
 - **Admin Panel**: Manage orders, inventory, production, customers, and reports
-- **Authentication**: JWT-based auth with bcrypt password hashing
+- **Authentication**: Supabase accounts and Google OAuth, with trusted customer/staff/admin roles; legacy MongoDB login compatibility
 - **Order Management**: Full lifecycle from quote to completion with status transition validation
 - **Inventory Tracking**: Stock management with low-stock alerts
 - **Production Pipeline**: Track orders through manufacturing stages
@@ -17,14 +17,14 @@ A full-stack printing business management system built with React, Express, and 
 - **Frontend**: React 18, Vite 8, styled-components
 - **Backend**: Express 4, Node.js (ES Modules)
 - **Database**: MongoDB with Mongoose 8
-- **Auth**: JWT + bcryptjs
+- **Auth**: Supabase Auth (legacy JWT + bcryptjs compatibility)
 - **Testing**: Jest + Supertest
 
 ## Getting Started
 
 ### Prerequisites
 
-- Node.js 18+
+- Node.js 22.12+ (required by the installed Vite version)
 - MongoDB (local or Atlas)
 
 ### Setup
@@ -36,14 +36,20 @@ npm install --legacy-peer-deps
 # Create .env from template
 cp .env.example .env
 
-# Edit .env with your MongoDB URI and a strong JWT_SECRET
+# Edit .env with your MongoDB URI, Supabase public project settings and a strong JWT_SECRET
 
 # Start the dev server (Vite frontend on :3000, Express API on :4000)
 npm run dev
 
-# In a separate terminal, start the backend
-npm run server
+# If Vite is already running and only the database/API need starting:
+npm run services:start
 ```
+
+The local launcher reuses a reachable configured database. On this Windows machine it can start the existing MongoDB executable with persistent data in `%LOCALAPPDATA%\BMPrinting\mongodb\data`. Set `MONGOD_BINARY` if MongoDB is installed elsewhere, and `MONGODB_DATA_DIR` to reuse an existing data directory. It never substitutes a temporary database or replaces an unavailable remote database. The database/API continue running after Vite closes; run `npm run services:start` after a reboot. Use managed services for production. See [current workflow verification](CUSTOMER_STAFF_WORKFLOW_FIX.md).
+
+### Manual payment workflow
+
+The active order flow uses manual bank payment verification for GCash, Maya, BPI, and GoTyme. Customers choose a payment method, pay the full order total, upload proof of payment, and submit the reference number and transaction date/time for staff verification.
 
 ### Default Admin Account
 
@@ -58,7 +64,9 @@ Change these immediately in production.
 
 | Command | Description |
 |---------|-------------|
-| `npm run dev` | Start Vite dev server (frontend) |
+| `npm run dev` | Ensure persistent local MongoDB/API are available, then start Vite |
+| `npm run services:start` | Start/check persistent local database and API |
+| `npm run dev:frontend` | Start only Vite against an already managed API |
 | `npm run server` | Start Express backend |
 | `npm run build` | Build production frontend |
 | `npm test` | Run API test suite |

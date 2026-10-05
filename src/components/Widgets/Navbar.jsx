@@ -1,10 +1,22 @@
+import { isOrderStaff } from '../../../shared/orderWorkflow';
 import { useEffect, useRef, useState } from "react";
 import { C } from "../../constants/colors";
 import { BMLogo } from "../Common/BMLogo";
 import { Btn } from "../Common/Btn";
 import "./Navbar.css";
 
+
+const AccountIcon = ({ name }) => (
+  <svg className="bm-account-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" focusable="false">
+    {name === "orders" && <><path d="m12 3 9 5v8l-9 5-9-5V8l9-5Z" /><path d="m3 8 9 5 9-5M12 13v8M7.5 5.5l9 5" /></>}
+    {name === "profile" && <><circle cx="12" cy="8" r="4" /><path d="M4 21v-2a8 8 0 0 1 16 0v2" /></>}
+    {name === "logout" && <><path d="M9 21H4V3h5M9 12h12m-4-4 4 4-4 4" /></>}
+    {name === "dashboard" && <><rect x="3" y="3" width="7" height="7" rx="1" /><rect x="14" y="3" width="7" height="7" rx="1" /><rect x="3" y="14" width="7" height="7" rx="1" /><rect x="14" y="14" width="7" height="7" rx="1" /></>}
+  </svg>
+);
+
 export const Navbar = ({ page, setPage, user, onLogout }) => {
+  const isStaff = user?.role === "staff";
   const [menuOpen, setMenuOpen] = useState(false);
   const [logoutModalMounted, setLogoutModalMounted] = useState(false);
   const [logoutModalOpen, setLogoutModalOpen] = useState(false);
@@ -112,13 +124,6 @@ export const Navbar = ({ page, setPage, user, onLogout }) => {
           toggleRef.current?.focus();
         }
       }}
-      style={{
-        borderBottom: `3px solid ${C.red}`,
-        position: "sticky",
-        top: 0,
-        zIndex: 100,
-        boxShadow: "0 2px 6px rgba(44,12,17,0.06)"
-      }}
     >
       <div
         className="bm-navbar-row"
@@ -141,7 +146,7 @@ export const Navbar = ({ page, setPage, user, onLogout }) => {
             cursor: "pointer",
             flexShrink: 0
           }}
-          onClick={() => navigate("home")}
+          onClick={() => navigate(isStaff ? "staff" : "home")}
         >
           <BMLogo size={44} />
           <div>
@@ -173,7 +178,7 @@ export const Navbar = ({ page, setPage, user, onLogout }) => {
           <span aria-hidden="true">{menuOpen ? "✕" : "☰"}</span>
         </button>
         <div id="bm-navigation-links" className={`bm-navbar-links${menuOpen ? " is-open" : ""}`}>
-          {links.map(l => (
+          {!isStaff && links.map(l => (
             <button
               className="bm-navbar-link"
               key={l.id}
@@ -181,8 +186,8 @@ export const Navbar = ({ page, setPage, user, onLogout }) => {
               aria-current={page === l.id ? "page" : undefined}
               style={{
                 padding: "8px 12px",
-                background: page === l.id ? C.red : "transparent",
-                color: page === l.id ? "#fff" : C.gray600,
+                background: "transparent",
+                color: "#2d2526",
                 border: "none",
                 borderRadius: 6,
                 fontSize: 13,
@@ -197,63 +202,51 @@ export const Navbar = ({ page, setPage, user, onLogout }) => {
           ))}
           {user ? (
             <>
-              {user.role === "admin" && (
+              {isOrderStaff(user) && (
                 <button
-                  onClick={() => navigate("admin")}
-                  style={{
-                    padding: "8px 12px",
-                    background: page === "admin" ? C.black : "transparent",
-                    color: page === "admin" ? "#fff" : C.gray600,
-                    border: `1px solid ${C.gray200}`,
-                    borderRadius: 6,
-                    fontSize: 13,
-                    fontWeight: 600,
-                    cursor: "pointer"
-                  }}
+                  type="button"
+                  className="bm-account-control"
+                  onClick={() => navigate(user.role === "admin" ? "admin" : "staff")}
+                  aria-current={page === (user.role === "admin" ? "admin" : "staff") ? "page" : undefined}
+                  title={user.role === "admin" ? "Admin" : "Staff Dashboard"}
                 >
-                  ⚙ Admin
+                  <AccountIcon name="dashboard" />
+                  <span className="bm-account-label">{user.role === "admin" ? "Admin" : "Staff Dashboard"}</span>
+                </button>
+              )}
+              {!isStaff && (
+                <button
+                  type="button"
+                  className="bm-account-control"
+                  aria-current={page === "myorders" ? "page" : undefined}
+                  onClick={() => navigate("myorders")}
+                  title="My Orders"
+                >
+                  <AccountIcon name="orders" />
+                  <span className="bm-account-label">My Orders</span>
                 </button>
               )}
               <button
-                onClick={() => navigate("myorders")}
-                style={{
-                  padding: "8px 12px",
-                  background: "transparent",
-                  color: C.gray600,
-                  border: `1px solid ${C.gray200}`,
-                  borderRadius: 6,
-                  fontSize: 13,
-                  fontWeight: 600,
-                  cursor: "pointer"
-                }}
-              >
-                📦 My Orders
-              </button>
-              <button
+                type="button"
+                className="bm-account-control bm-account-control--profile"
+                aria-current={page === "profile" ? "page" : undefined}
                 onClick={() => navigate("profile")}
-                style={{
-                  padding: "8px 12px",
-                  background: "transparent",
-                  color: C.gray600,
-                  border: `1px solid ${C.gray200}`,
-                  borderRadius: 6,
-                  fontSize: 13,
-                  fontWeight: 600,
-                  cursor: "pointer"
-                }}
+                title={user.name}
               >
-                👤 {user.name.split(" ")[0]}
+                <AccountIcon name="profile" />
+                <span className="bm-account-label">{user.name.split(" ")[0]}</span>
               </button>
-              <Btn size="sm" variant="ghost" onClick={openLogoutModal}>
-                Logout
-              </Btn>
+              <button type="button" className="bm-account-control bm-account-control--logout" onClick={openLogoutModal} title="Logout">
+                <AccountIcon name="logout" />
+                <span className="bm-account-label">Logout</span>
+              </button>
             </>
           ) : (
             <>
-              <Btn size="sm" variant="ghost" style={{ background: "#fff", borderColor: "#ddc9cc", color: C.black }} onClick={() => navigate("login")}>
+              <Btn size="sm" variant="ghost" style={{ background: "rgba(255,255,255,0.22)", borderColor: "rgba(45,37,38,0.4)", color: "#2d2526" }} aria-current={page === "login" ? "page" : undefined} onClick={() => navigate("login")}>
                 Login
               </Btn>
-              <Btn size="sm" variant="primary" onClick={() => navigate("register")}>
+              <Btn size="sm" variant="primary" aria-current={page === "register" ? "page" : undefined} onClick={() => navigate("register")}>
                 Register
               </Btn>
             </>

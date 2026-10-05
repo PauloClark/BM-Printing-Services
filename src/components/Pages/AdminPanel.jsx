@@ -1,3 +1,11 @@
+import { JobOrders } from './JobOrders';
+import { ArchivedOrders, CompletedOrdersReport } from './AdminOrderArchive';
+import { InventoryMaterials } from './InventoryMaterials';
+import { ORDER_STATUSES, displayOrderStatus } from '../../../shared/orderWorkflow';
+import { orderApi } from '../../utils/orderApi';
+import { store } from '../../utils/storage';
+import { StaffOrders } from './StaffOrders';
+import { AdminPayments } from './AdminPayments';
 import React, { useState, useEffect, useCallback } from 'react';
 import { C } from '../../constants/colors';
 import { showToast } from '../../utils/notifications';
@@ -6,8 +14,11 @@ import { Btn } from '../Common/Btn';
 import { Input } from '../Common/Input';
 import { Badge } from '../Common/Badge';
 
-const STATUS_LIST = ['Pending','Confirmed','Queued','In Production','Quality Check','Ready','Completed','Cancelled'];
+const STATUS_LIST = ORDER_STATUSES;
 const ORDER_STATUS_COLORS = {
+  Processing: { bg: '#e8f5ff', color: '#0277bd' },
+  'Ready for Pickup': { bg: '#f3e5f5', color: '#6a1b9a' },
+  'Picked Up': { bg: '#e6f5ec', color: '#1a7a3a' },
   Pending: { bg: '#fef3e2', color: '#b45309' },
   Quoted: { bg: '#e3f0fc', color: '#1565c0' },
   Confirmed: { bg: '#e3f0fc', color: '#1565c0' },
@@ -24,26 +35,23 @@ const ORDER_STATUS_COLORS = {
 const fmt = (v) => `₱${Number(v || 0).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 const fmtDate = (d) => d ? new Date(d).toLocaleDateString('en-PH', { year: 'numeric', month: 'short', day: 'numeric' }) : '';
 
-const getToken = () => {
-  try {
-    const raw = localStorage.getItem('session');
-    if (raw) { const s = JSON.parse(raw); return s?.token || ''; }
-  } catch {}
-  return '';
+const getToken = async () => {
+  const session = await store.get('session');
+  if (session?.token) return session.token;
+  const { supabase } = await import('../../utils/supabaseClient');
+  const { data } = await supabase.auth.getSession();
+  return data.session?.access_token || '';
 };
-const api = async (url, opts = {}) => {
-  const token = getToken();
-  const headers = { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json', ...opts.headers };
-  const r = await fetch(url, { ...opts, headers });
-  if (r.status === 401) { localStorage.removeItem('session'); window.location.reload(); throw new Error('Session expired. Please login again.'); }
-  if (!r.ok) throw new Error(`HTTP ${r.status}`);
-  return r.json();
-};
+const api = async (url, opts = {}) => orderApi(url, opts, await store.get('session'));
 
 const SIDEBAR_ITEMS = [
   { id: 'dashboard', icon: '📊', label: 'Dashboard' },
   { id: 'orders', icon: '📋', label: 'Orders' },
+  { id: 'pickup', icon: '📤', label: 'Ready for Pickup' },
+  { id: 'payments', icon: '💳', label: 'Payments for Verification' },
   { id: 'products', icon: '📦', label: 'Products' },
+  { id: 'jobs', icon: '??', label: 'Job Orders' },
+  { id: 'archive', icon: '🗄️', label: 'Archived Orders' },
   { id: 'inventory', icon: '🏭', label: 'Inventory' },
   { id: 'production', icon: '⚙', label: 'Production' },
   { id: 'customers', icon: '👥', label: 'Customers' },
@@ -122,14 +130,11 @@ const StatusRow = ({ label, count, total, color }) => {
   );
 };
 
-export default function AdminPanel() {
-  const [tab, setTab] = useState('dashboard');
+export default function AdminPanel({ user, showToast: notify }) {
+  const [tab, setTab] = useState('orders');
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [summary, setSummary] = useState(null);
   const [orders, setOrders] = useState([]);
-  const [orderFilter, setOrderFilter] = useState('All');
-  const [selectedOrder, setSelectedOrder] = useState(null);
-  const [orderFiles, setOrderFiles] = useState([]);
   const [products, setProducts] = useState([]);
   const [inventory, setInventory] = useState([]);
   const [lowStock, setLowStock] = useState([]);
@@ -146,6 +151,15 @@ export default function AdminPanel() {
   const [newProduct, setNewProduct] = useState({ name: '', category: '', description: '', price: '', stock: '', lowStockThreshold: '', status: 'Active', image: '' });
   const [newProductImage, setNewProductImage] = useState(null);
   const [searchQuery, setSearchQuery] = useState('');
+  const [pickupOrders, setPickupOrders] = useState([]);
+  const [pickupLoading, setPickupLoading] = useState(false);
+  const [pickupError, setPickupError] = useState('');
+  const [pickupDetail, setPickupDetail] = useState(null);
+  const [pickupDetailLoading, setPickupDetailLoading] = useState(false);
+  const [pickupConfirming, setPickupConfirming] = useState(false);
+  const [pickupReceivedBy, setPickupReceivedBy] = useState('');
+  const [stockMovements, setStockMovements] = useState([]);
+  const [movementsLoading, setMovementsLoading] = useState(false);
 
   const loadData = useCallback(async () => {
     const loaders = {
@@ -157,12 +171,19 @@ export default function AdminPanel() {
       orders: async () => {
         try { const d = await api('/api/admin/orders'); if (d.orders) setOrders(d.orders); } catch {}
       },
+      pickup: async () => {
+        setPickupLoading(true);
+        try { const d = await api('/api/orders/ready-for-pickup'); if (d.orders) setPickupOrders(d.orders); setPickupError(''); }
+        catch (e) { setPickupError(e.message); }
+        finally { setPickupLoading(false); }
+      },
       products: async () => {
         try { const d = await api('/api/products'); if (d.products) setProducts(d.products); } catch {}
       },
       inventory: async () => {
         try { const d = await api('/api/inventory'); if (d.inventory) setInventory(d.inventory); } catch {}
         try { const d = await api('/api/inventory/low-stock'); if (d.inventory) setLowStock(d.inventory); } catch {}
+        try { const d = await api('/api/inventory/movements'); if (d.movements) setStockMovements(d.movements); } catch {}
       },
       production: async () => {
         try { const d = await api('/api/production'); if (d.productions) setProductions(d.productions); } catch {}
@@ -180,8 +201,8 @@ export default function AdminPanel() {
         try { const d = await api('/api/system/health'); if (d.success) setSystemHealth(d.data); } catch {}
       }
     };
-    if (loaders[tab]) await loaders[tab]();
-  }, [tab, searchQuery]);
+    if (tab !== 'orders' && user?.role === 'admin' && loaders[tab]) await loaders[tab]();
+  }, [tab, searchQuery, user]);
 
   useEffect(() => { loadData(); }, [loadData]);
 
@@ -197,18 +218,6 @@ export default function AdminPanel() {
       if (d && (d.totalOrders > 0 || d.totalSales > 0)) { setReportSummary(d); setReportsExist(true); }
     } catch (e) { showToast(e.message || 'Failed to load report.', 'error'); }
     finally { setReportLoading(false); }
-  };
-
-  const updateOrderStatus = async (orderId, status) => {
-    try {
-      await api(`/api/orders/${orderId}/status`, { method: 'PATCH', body: JSON.stringify({ status }) });
-      showToast(`Order ${orderId} updated to ${status}.`, 'success');
-      loadData();
-    } catch (e) { showToast(e.message || 'Failed to update order.', 'error'); }
-  };
-
-  const viewOrderFiles = async (orderId) => {
-    try { const d = await api(`/api/files/${orderId}`); setOrderFiles(d.files || []); } catch { setOrderFiles([]); }
   };
 
   const handleProductSubmit = async (e) => {
@@ -267,9 +276,8 @@ export default function AdminPanel() {
     catch (e) { showToast(e.message || 'Failed.', 'error'); }
   };
 
-  const filteredOrders = orderFilter === 'All' ? orders : orders.filter(o => o.status === orderFilter);
   const statusCounts = {};
-  orders.forEach(o => { statusCounts[o.status] = (statusCounts[o.status] || 0) + 1; });
+  orders.forEach(o => { statusCounts[displayOrderStatus(o.status)] = (statusCounts[displayOrderStatus(o.status)] || 0) + 1; });
   const lowStockProducts = products.filter(p => p.stock <= p.lowStockThreshold);
   const prodCounts = {};
   productions.forEach(p => { prodCounts[p.status] = (prodCounts[p.status] || 0) + 1; });
@@ -279,7 +287,7 @@ export default function AdminPanel() {
       const ds = reportDate instanceof Date
         ? `${reportDate.getFullYear()}-${String(reportDate.getMonth()+1).padStart(2,'0')}-${String(reportDate.getDate()).padStart(2,'0')}`
         : String(reportDate);
-      const token = getToken();
+      const token = await getToken();
       const response = await fetch(`/api/admin/reports/orders/${ds}/download`, { headers: { 'Authorization': `Bearer ${token}` } });
       if (!response.ok) {
         const err = await response.json().catch(() => ({}));
@@ -302,17 +310,190 @@ export default function AdminPanel() {
   const renderTab = () => {
     switch (tab) {
       case 'dashboard': return renderDashboard();
-      case 'orders': return renderOrders();
+      case 'orders': return <StaffOrders user={user} showToast={notify} />;
+      case 'pickup': return renderPickup();
+      case 'payments': return <AdminPayments user={user} showToast={notify} />;
       case 'products': return renderProducts();
-      case 'inventory': return renderInventory();
+      case 'inventory': return <><InventoryMaterials user={user} />{renderInventoryMovements()}</>;
+      case 'jobs': return <JobOrders user={user} />;
+      case 'archive': return <ArchivedOrders user={user} />;
       case 'production': return renderProduction();
       case 'customers': return renderCustomers();
-      case 'reports': return renderReports();
+      case 'reports': return <><CompletedOrdersReport user={user} />{renderReports()}</>;
       case 'audit': return renderAudit();
       case 'system': return renderSystem();
       default: return renderDashboard();
     }
   };
+
+  const loadPickupDetail = async (orderId) => {
+    setPickupDetailLoading(true);
+    setPickupDetail(null);
+    setPickupReceivedBy('');
+    try {
+      const d = await api(`/api/orders/${encodeURIComponent(orderId)}/pickup-details`);
+      setPickupDetail(d);
+    } catch (e) {
+      showToast(e.message || 'Failed to load pickup details.', 'error');
+    } finally {
+      setPickupDetailLoading(false);
+    }
+  };
+
+  const confirmPickup = async () => {
+    if (!pickupDetail || pickupConfirming) return;
+    setPickupConfirming(true);
+    try {
+      const d = await api(`/api/orders/${encodeURIComponent(pickupDetail.order.id)}/confirm-pickup`, {
+        method: 'POST',
+        body: JSON.stringify({ receivedByName: pickupReceivedBy || undefined })
+      });
+      showToast(`Order ${d.order.id} confirmed as Picked Up. Inventory deducted.`, 'success');
+      setPickupDetail(null);
+      loadData();
+    } catch (e) {
+      showToast(e.message || 'Failed to confirm pickup.', 'error');
+    } finally {
+      setPickupConfirming(false);
+    }
+  };
+
+  const renderPickup = () => (
+    <div>
+      <h3 style={sectionTitle}>Ready for Pickup ({pickupOrders.length})</h3>
+      {pickupLoading && <p style={{ color: C.gray400 }}>Loading orders...</p>}
+      {pickupError && <p role="alert" style={{ color: C.red }}>{pickupError}</p>}
+      {!pickupLoading && !pickupError && pickupOrders.length === 0 && (
+        <Card><p style={{ textAlign: 'center', color: C.gray400, padding: 20 }}>No orders ready for pickup.</p></Card>
+      )}
+      {pickupOrders.length > 0 && (
+        <Card>
+          <div style={{ overflowX: 'auto' }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+              <thead>
+                <tr style={{ borderBottom: `2px solid ${C.gray200}` }}>
+                  {['Order #', 'Customer', 'Product', 'Qty', 'Status', 'Ready Date', 'Actions'].map(h => (
+                    <th key={h} style={{ padding: '8px 10px', textAlign: 'left', color: C.gray600, fontWeight: 600, whiteSpace: 'nowrap' }}>{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {pickupOrders.map(o => (
+                  <tr key={o.id} style={{ borderBottom: `1px solid ${C.gray100}` }}>
+                    <td style={tdStyle}>{o.id}</td>
+                    <td style={tdStyle}>{o.customer}</td>
+                    <td style={tdStyle}>{o.product}</td>
+                    <td style={tdStyle}>{o.quantity}</td>
+                    <td style={tdStyle}><Badge status={o.status} /></td>
+                    <td style={tdStyle}>{fmtDate(o.readyForPickupAt)}</td>
+                    <td style={tdStyle}>
+                      <div style={{ display: 'flex', gap: 4 }}>
+                        <Btn size="sm" onClick={() => loadPickupDetail(o.id)} loading={pickupDetailLoading}>View</Btn>
+                        <Btn size="sm" variant="primary" onClick={() => loadPickupDetail(o.id)}>Confirm Pickup</Btn>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </Card>
+      )}
+
+      {/* Pickup Detail Modal */}
+      {pickupDetail && (
+        <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }} onClick={() => !pickupConfirming && setPickupDetail(null)}>
+          <div style={{ background: '#fff', borderRadius: 12, padding: 24, maxWidth: 680, width: '90%', maxHeight: '85vh', overflowY: 'auto' }} onClick={e => e.stopPropagation()}>
+            <h3 style={{ margin: '0 0 16px', fontFamily: 'Montserrat', fontSize: 18 }}>Confirm Pickup — {pickupDetail.order.id}</h3>
+            {pickupDetailLoading && <p style={{ textAlign: 'center', color: '#666' }}>Loading...</p>}
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, marginBottom: 16 }}>
+              <div>
+                <h4 style={{ margin: '0 0 8px', fontSize: 14 }}>Order Information</h4>
+                <dl style={{ margin: 0, fontSize: 13 }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', padding: '4px 0' }}><dt style={{ color: C.gray600 }}>Customer</dt><dd style={{ margin: 0, fontWeight: 600 }}>{pickupDetail.order.customer}</dd></div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', padding: '4px 0' }}><dt style={{ color: C.gray600 }}>Product</dt><dd style={{ margin: 0, fontWeight: 600 }}>{pickupDetail.order.product}</dd></div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', padding: '4px 0' }}><dt style={{ color: C.gray600 }}>Quantity</dt><dd style={{ margin: 0, fontWeight: 600 }}>{pickupDetail.order.quantity}</dd></div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', padding: '4px 0' }}><dt style={{ color: C.gray600 }}>Total Price</dt><dd style={{ margin: 0, fontWeight: 600 }}>{fmt(pickupDetail.order.total)}</dd></div>
+                </dl>
+              </div>
+              <div>
+                <h4 style={{ margin: '0 0 8px', fontSize: 14 }}>Production</h4>
+                <dl style={{ margin: 0, fontSize: 13 }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', padding: '4px 0' }}><dt style={{ color: C.gray600 }}>Job Order</dt><dd style={{ margin: 0, fontWeight: 600 }}>{pickupDetail.job.jobOrderId || 'N/A'}</dd></div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', padding: '4px 0' }}><dt style={{ color: C.gray600 }}>Employee</dt><dd style={{ margin: 0, fontWeight: 600 }}>{pickupDetail.job.assignedEmployeeName || 'N/A'}</dd></div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', padding: '4px 0' }}><dt style={{ color: C.gray600 }}>Completed</dt><dd style={{ margin: 0, fontWeight: 600 }}>{fmtDate(pickupDetail.job.productionCompletedAt)}</dd></div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', padding: '4px 0' }}><dt style={{ color: C.gray600 }}>Ready for Pickup</dt><dd style={{ margin: 0, fontWeight: 600 }}>{fmtDate(pickupDetail.job.readyForPickupAt)}</dd></div>
+                </dl>
+              </div>
+            </div>
+            <h4 style={{ margin: '0 0 8px', fontSize: 14 }}>Reserved Materials</h4>
+            <div style={{ background: '#f8f9fa', borderRadius: 8, padding: '12px 16px', marginBottom: 16 }}>
+              {(pickupDetail.job.reservedMaterials || []).map((m, i) => (
+                <div key={i} style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 0', borderBottom: '1px solid #e0e0e0', fontSize: 13 }}>
+                  <span style={{ fontWeight: 600 }}>{m.material}</span>
+                  <span>Reserved: {m.quantity} {m.unit}</span>
+                </div>
+              ))}
+            </div>
+            <div style={{ marginBottom: 16 }}>
+              <label style={{ display: 'block', fontSize: 13, fontWeight: 600, marginBottom: 6 }}>Received by (optional)</label>
+              <input type="text" value={pickupReceivedBy} onChange={e => setPickupReceivedBy(e.target.value)} placeholder="Name of person receiving the order" style={{ width: '100%', padding: '10px 12px', border: '1px solid #ddd', borderRadius: 6, fontSize: 14 }} />
+            </div>
+            <div style={{ background: '#fff3e0', border: '1px solid #ffb74d', borderRadius: 8, padding: '12px 16px', marginBottom: 16 }}>
+              <p style={{ margin: 0, fontSize: 13, color: '#e65100' }}>
+                <strong>Confirm that Order #{pickupDetail.order.id} has been released/picked up by the customer?</strong>
+              </p>
+              <p style={{ margin: '6px 0 0', fontSize: 12, color: '#e65100' }}>
+                This will finalize the reserved inventory deduction. This action cannot be undone.
+              </p>
+            </div>
+            <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+              <Btn variant="ghost" disabled={pickupConfirming} onClick={() => setPickupDetail(null)}>Cancel</Btn>
+              <Btn variant="primary" loading={pickupConfirming} disabled={pickupConfirming} onClick={confirmPickup}>
+                {pickupConfirming ? 'Confirming...' : 'Confirm Pickup'}
+              </Btn>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+
+  const renderInventoryMovements = () => (
+    <Card style={{ marginTop: 20 }}>
+      <h4 style={cardTitle}>Inventory Movements</h4>
+      {movementsLoading && <p style={{ color: C.gray400 }}>Loading movements...</p>}
+      {!movementsLoading && stockMovements.length === 0 && (
+        <p style={{ fontSize: 13, color: C.gray400, textAlign: 'center', padding: 20 }}>No stock movements recorded yet.</p>
+      )}
+      {stockMovements.length > 0 && (
+        <div style={{ overflowX: 'auto' }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+            <thead>
+              <tr style={{ borderBottom: `2px solid ${C.gray200}` }}>
+                {['Date', 'Item', 'Type', 'Qty', 'Order', 'Reason', 'Performed By'].map(h => (
+                  <th key={h} style={{ padding: '8px 10px', textAlign: 'left', color: C.gray600, fontWeight: 600, whiteSpace: 'nowrap' }}>{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {stockMovements.map((m, i) => (
+                <tr key={m._id || i} style={{ borderBottom: `1px solid ${C.gray100}` }}>
+                  <td style={tdStyle}>{fmtDate(m.createdAt)}</td>
+                  <td style={tdStyle}>{m.material}</td>
+                  <td style={tdStyle}><Badge status={m.movementType === 'OUT' ? 'Cancelled' : 'Completed'} /></td>
+                  <td style={tdStyle} style={{ color: m.movementType === 'OUT' ? '#c62828' : '#1a7a3a', fontWeight: 600 }}>{m.movementType === 'OUT' ? '-' : '+'}{m.quantity}</td>
+                  <td style={tdStyle}>{m.orderId}</td>
+                  <td style={tdStyle}>{m.reason === 'ORDER_PICKUP' ? 'Order Pickup' : m.reason === 'RESTOCK' ? 'Restock' : m.reason}</td>
+                  <td style={tdStyle}>{m.performedByName || m.performedBy}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </Card>
+  );
 
   const renderDashboard = () => (
     <div>
@@ -410,68 +591,6 @@ export default function AdminPanel() {
           ))}
         </Card>
       </div>
-    </div>
-  );
-
-  const renderOrders = () => (
-    <div>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
-        <h3 style={sectionTitle}>Orders ({filteredOrders.length})</h3>
-        <input
-          placeholder="Search orders..."
-          value={searchQuery}
-          onChange={e => setSearchQuery(e.target.value)}
-          style={{ padding: '8px 12px', border: `1px solid ${C.gray200}`, borderRadius: 6, fontSize: 13, width: 220 }}
-        />
-      </div>
-      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 16 }}>
-        {['All', ...STATUS_LIST].map(s => (
-          <button key={s} onClick={() => setOrderFilter(s)} style={{
-            padding: '5px 12px', fontSize: 12, fontWeight: 600, border: `1px solid ${orderFilter === s ? C.red : C.gray200}`,
-            borderRadius: 20, background: orderFilter === s ? C.red : '#fff', color: orderFilter === s ? '#fff' : C.gray600, cursor: 'pointer'
-          }}>{s}</button>
-        ))}
-      </div>
-      <Card>
-        <div style={{ overflowX: 'auto' }}>
-          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
-            <thead>
-              <tr style={{ borderBottom: `2px solid ${C.gray200}` }}>
-                {['Order ID','Customer','Email','Product','Qty','Total','Status','Date','Actions'].map(h => (
-                  <th key={h} style={{ padding: '8px 10px', textAlign: 'left', color: C.gray600, fontWeight: 600, whiteSpace: 'nowrap' }}>{h}</th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {filteredOrders.slice(0, 50).map(o => {
-                const item = o.items?.[0] || {};
-                return (
-                  <tr key={o.orderId} style={{ borderBottom: `1px solid ${C.gray100}` }}>
-                    <td style={tdStyle}>{o.orderId}</td>
-                    <td style={tdStyle}>{o.customer}</td>
-                    <td style={tdStyle}>{o.email}</td>
-                    <td style={tdStyle}>{item.productName || ''}</td>
-                    <td style={tdStyle}>{item.quantity || 0}</td>
-                    <td style={tdStyle}>{fmt(o.total)}</td>
-                    <td style={tdStyle}><Badge status={o.status} /></td>
-                    <td style={tdStyle}>{fmtDate(o.createdAt)}</td>
-                    <td style={tdStyle}>
-                      <select
-                        value={o.status}
-                        onChange={e => updateOrderStatus(o.orderId, e.target.value)}
-                        style={{ padding: '4px 6px', fontSize: 11, border: `1px solid ${C.gray200}`, borderRadius: 4, background: '#fff' }}
-                      >
-                        {STATUS_LIST.map(s => <option key={s} value={s}>{s}</option>)}
-                      </select>
-                    </td>
-                  </tr>
-                );
-              })}
-              {filteredOrders.length === 0 && <tr><td colSpan={9} style={{ padding: 20, textAlign: 'center', color: C.gray400 }}>No orders found</td></tr>}
-            </tbody>
-          </table>
-        </div>
-      </Card>
     </div>
   );
 
@@ -585,7 +704,7 @@ export default function AdminPanel() {
             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
               <thead>
                 <tr style={{ borderBottom: `2px solid ${C.gray200}` }}>
-                  {['Material','Type','Quantity','Min Level','Cost/Unit','Supplier','Actions'].map(h => (
+                  {['Material','Type','On Hand','Reserved','Available','Min Level','Cost/Unit','Supplier','Actions'].map(h => (
                     <th key={h} style={{ padding: '8px 10px', textAlign: 'left', color: C.gray600, fontWeight: 600 }}>{h}</th>
                   ))}
                 </tr>
@@ -596,6 +715,8 @@ export default function AdminPanel() {
                     <td style={tdStyle}>{item.material}</td>
                     <td style={tdStyle}>{item.type}</td>
                     <td style={tdStyle}><span style={{ color: item.quantity <= item.minimumStockLevel ? '#c62828' : C.gray800, fontWeight: 600 }}>{item.quantity}</span></td>
+                    <td style={tdStyle}>{item.reservedQuantity}</td>
+                    <td style={tdStyle}><span style={{ fontWeight: 600, color: item.availableQuantity <= 0 ? '#c62828' : C.gray800 }}>{item.availableQuantity}</span></td>
                     <td style={tdStyle}>{item.minimumStockLevel}</td>
                     <td style={tdStyle}>{fmt(item.costPerUnit)}</td>
                     <td style={tdStyle}>{item.supplier || '-'}</td>
@@ -614,6 +735,7 @@ export default function AdminPanel() {
           <p style={{ fontSize: 13, color: C.gray400, padding: 16, textAlign: 'center' }}>No raw materials tracked yet. Use stock-in to add materials.</p>
         )}
       </Card>
+      {renderInventoryMovements()}
     </div>
   );
 
@@ -820,6 +942,8 @@ export default function AdminPanel() {
       </div>
     </div>
   );
+
+  if (user?.role !== 'admin') return <div style={{ padding: 24 }}><StaffOrders user={user} showToast={notify} /></div>;
 
   return (
     <div style={{ display: 'flex', minHeight: 'calc(100vh - 70px)' }}>

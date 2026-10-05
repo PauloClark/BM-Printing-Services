@@ -1,8 +1,12 @@
-import { useState, useEffect, useCallback } from "react";
+import { orderApi, rememberGuestOrder } from './utils/orderApi';
+import { rememberOrderReturn, consumeAuthDestination } from './utils/authReturn';
+import { canOpenDashboard, dashboardForRole, supabaseAppUser } from '../shared/roles';
+import { ProtectedDashboard } from './components/Pages/ProtectedDashboard';
+import { StaffOrders } from './components/Pages/StaffOrders';
+import { useState, useEffect, useCallback, useRef } from "react";
 import { C } from "./constants/colors";
 import { globalStyles } from "./constants/styles";
 import "./constants/internalPages.css";
-import { PRODUCTS } from "./constants/products";
 import { store } from "./utils/storage";
 import { Navbar } from "./components/Widgets/Navbar";
 import { HomePage } from "./components/Pages/HomePage";
@@ -18,257 +22,152 @@ import AdminPanel from "./components/Pages/AdminPanel";
 import { Toast } from "./components/Common/Toast";
 import { Spinner } from "./components/Common/Spinner";
 import { BMLogo } from "./components/Common/BMLogo";
+import { Chatbot } from "./components/Chatbot";
 
+const PAGES = ['home', 'products', 'order', 'track', 'myorders', 'profile', 'contact', 'login', 'register', 'staff', 'admin'];
+const STAFF_CUSTOMER_PAGES = new Set(['home', 'products', 'order', 'track', 'myorders', 'contact']);
+const initialPage = () => {
+  if (typeof window === 'undefined') return 'home';
+  const hash = window.location.hash.replace(/^#\/?/, '');
+  const path = window.location.pathname.replace(/^\/|\/$/g, '');
+  const pathPage = ({ 'track-order': 'track', 'my-orders': 'myorders' })[path] || path;
+  return PAGES.includes(hash) ? hash : PAGES.includes(pathPage) ? pathPage : 'home';
+};
 export default function App() {
-  const [page, setPage] = useState("home");
+  const [page, setCurrentPage] = useState(initialPage);
+  const userRef = useRef(null);
+  const setPage = useCallback(next => {
+    if (!PAGES.includes(next)) return;
+    if (userRef.current?.role === 'staff' && STAFF_CUSTOMER_PAGES.has(next)) next = 'staff';
+    if (initialPage() === "order" && ["login", "register"].includes(next)) rememberOrderReturn();
+    setCurrentPage(next);
+    window.history.replaceState(null, '', '#' + next);
+  }, []);
+  const identity = useRef(null);
   const [user, setUser] = useState(null);
+  userRef.current = user;
   const [orders, setOrders] = useState([]);
   const [reviews, setReviews] = useState([]);
   const [selectedProduct, setSelectedProduct] = useState(null);
   const [toast, setToast] = useState(null);
   const [loadingApp, setLoadingApp] = useState(true);
+  const protectedPageRedirect = !loadingApp && ['staff', 'admin'].includes(page) &&
+    (!user || !canOpenDashboard(user.role, page));
+  const renderedPage = user?.role === 'staff' && STAFF_CUSTOMER_PAGES.has(page)
+    ? 'staff'
+    : protectedPageRedirect
+      ? dashboardForRole(user?.role)
+      : page;
+
+  const completeSignIn = useCallback(next => {
+    const shouldNavigate = identity.current !== next.id || ['login', 'register'].includes(initialPage());
+    identity.current = next.id;
+    setUser(next);
+    if (shouldNavigate) {
+      const destination = consumeAuthDestination(next.role);
+      const checkoutReturn = new URLSearchParams(window.location.search).get('payment_return');
+      setPage(next.role === 'customer' && /^[A-Z0-9-]{1,50}$/.test(checkoutReturn || '') ? 'myorders' : destination);
+    }
+  }, [setPage]);
 
   const showToast = useCallback(
     (message, type = "info") => setToast({ message, type }),
     []
   );
 
-  const toSupabaseAppUser = useCallback((supabaseUser) => {
-    const metadata = supabaseUser.user_metadata || {};
-    const email = supabaseUser.email || "";
-    const fullName = metadata.full_name || metadata.name ||
-      [metadata.given_name, metadata.family_name].filter(Boolean).join(" ");
-
-    return {
-      id: supabaseUser.id,
-      name: fullName || email.split("@")[0] || "Customer",
-      email,
-      avatar: metadata.avatar_url || metadata.picture || "",
-      role: "customer",
-      authProvider: "supabase"
-    };
-  }, []);
-
-  // Load persisted data on mount
   useEffect(() => {
-    (async () => {
-      try {
-        let supabaseUser = null;
-        let orderAuthToken = "";
-        try {
-          const { supabase } = await import("./utils/supabaseClient");
-          const { data } = await supabase.auth.getSession();
-          if (data.session?.user) {
-            supabaseUser = toSupabaseAppUser(data.session.user);
-            orderAuthToken = data.session.access_token;
-          }
-        } catch (error) {
-          console.error("Supabase session restore failed:", error);
-        }
-
-        if (supabaseUser) {
-          await store.del("session");
-          setUser(supabaseUser);
-        } else {
-          const session = await store.get("session");
-          if (session) {
-            setUser(session);
-            orderAuthToken = session.token || "";
-          }
-        }
-
-        // Load only orders owned by the restored session.
-        try {
-          if (!orderAuthToken) throw new Error("No authenticated order session.");
-          const response = await fetch("/api/orders", {
-            headers: { Authorization: `Bearer ${orderAuthToken}` }
-          });
-          if (!response.ok) throw new Error("Backend error");
-          const text = await response.text();
-          if (!text) throw new Error("Empty response");
-          const data = JSON.parse(text);
-          if (response.ok && Array.isArray(data.orders) && data.orders.length > 0) {
-            setOrders(data.orders);
-          } else {
-            throw new Error("No backend orders");
-          }
-        } catch {
-          let storedOrders = await store.get("orders");
-          if (!storedOrders || storedOrders.length === 0) {
-            const sampleOrders = [
-              {
-                id: "ORD-SAMPLE01",
-                customer: "Maria Santos",
-                email: "maria@email.com",
-                phone: "09171234567",
-                product: "Custom T-Shirt Printing",
-                productId: 1,
-                quantity: 10,
-                specs: "White XL, front logo, red print",
-                payment: "GCash",
-                total: 1800,
-                status: "In Production",
-                date: "2025-05-08",
-                notes: "Rush order — needed by May 15",
-                userId: null,
-                createdAt: Date.now() - 86400000 * 3
-              },
-              {
-                id: "ORD-SAMPLE02",
-                customer: "Juan dela Cruz",
-                email: "juan@email.com",
-                phone: "09281234567",
-                product: "School ID with Lanyard",
-                productId: 4,
-                quantity: 50,
-                specs: "Grade 7-10 IDs, school logo",
-                payment: "Bank Transfer (BDO/BPI)",
-                total: 3250,
-                status: "Confirmed",
-                date: "2025-05-07",
-                notes: "",
-                userId: null,
-                createdAt: Date.now() - 86400000 * 4
-              },
-              {
-                id: "ORD-SAMPLE03",
-                customer: "Anna Reyes",
-                email: "anna@email.com",
-                phone: "09391234567",
-                product: "Mug Printing",
-                productId: 9,
-                quantity: 12,
-                specs: "White mugs, personalized photo each",
-                payment: "PayMaya",
-                total: 1800,
-                status: "Completed",
-                date: "2025-05-03",
-                notes: "Gift set for anniversary",
-                userId: null,
-                createdAt: Date.now() - 86400000 * 8
-              },
-              {
-                id: "ORD-SAMPLE04",
-                customer: "Pedro Garcia",
-                email: "pedro@email.com",
-                phone: "09501234567",
-                product: "Tarpaulin Printing (per sqm)",
-                productId: 7,
-                quantity: 8,
-                specs: "4x2 meters each, election streamers",
-                payment: "GCash",
-                total: 360,
-                status: "Pending",
-                date: "2025-05-09",
-                notes: "",
-                userId: null,
-                createdAt: Date.now() - 86400000 * 2
-              }
-            ];
-            storedOrders = sampleOrders;
-            await store.set("orders", sampleOrders);
-          }
-          setOrders(storedOrders);
-        }
-
-        // Load reviews
-        const storedReviews = (await store.get("reviews")) || [];
-        setReviews(storedReviews);
-      } catch (e) {
-        console.error("Storage load error:", e);
+    const changed = () => {
+      const nextPage = initialPage();
+      if (userRef.current?.role === 'staff' && STAFF_CUSTOMER_PAGES.has(nextPage)) {
+        setPage('staff');
+        return;
       }
-      setLoadingApp(false);
-    })();
-  }, [toSupabaseAppUser]);
+      setCurrentPage(nextPage);
+    };
+    window.addEventListener('hashchange', changed);
+    window.addEventListener('popstate', changed);
+    return () => { window.removeEventListener('hashchange', changed); window.removeEventListener('popstate', changed); };
+  }, [setPage]);
 
   useEffect(() => {
-    let active = true;
-    let subscription;
+    if (renderedPage !== page) setPage(renderedPage);
+  }, [page, renderedPage, setPage]);
 
-    const listenForSupabaseSession = async () => {
+  useEffect(() => {
+    let active = true, revision = 0, subscription;
+    const sync = async (session, event) => {
+      const currentRevision = ++revision;
       try {
-        const { supabase } = await import("./utils/supabaseClient");
-        if (!active) return;
-
-        const { data } = supabase.auth.onAuthStateChange((event, session) => {
-          if (!active) return;
-
-          if (session?.user) {
-            void store.del("session");
-            setUser(toSupabaseAppUser(session.user));
-            if (event === "SIGNED_IN") setPage("home");
-          } else if (event === "SIGNED_OUT") {
-            void store.del("session");
-            setUser(current => current?.authProvider === "supabase" ? null : current);
+        let next = null;
+        if (session?.access_token) {
+          const { supabase } = await import('./utils/supabaseClient');
+          const { data, error } = await supabase.auth.getUser(session.access_token);
+          if (error || !data.user) throw error || new Error('Unable to verify your session.');
+          next = supabaseAppUser(data.user);
+          await store.del('session');
+        } else if (event !== 'SIGNED_OUT') {
+          const legacy = await store.get('session');
+          if (legacy?.token) {
+            const { user: verified } = await orderApi('/api/auth/me', {}, legacy);
+            next = { ...legacy, ...verified };
           }
+        }
+        if (!active || currentRevision !== revision) return;
+        const newlySignedIn = next && identity.current !== next.id;
+        identity.current = next?.id || null;
+        setUser(next);
+        if (newlySignedIn && (event === 'SIGNED_IN' || ['home', 'login', 'register'].includes(initialPage()))) {
+          setPage(consumeAuthDestination(next.role));
+        }
+      } catch (error) {
+        if (active && currentRevision === revision) {
+          setUser(null); identity.current = null;
+          showToast('Session verification failed. Please login again.', 'error');
+        }
+      } finally { if (active && currentRevision === revision) setLoadingApp(false); }
+    };
+    (async () => {
+      setReviews((await store.get('reviews')) || []);
+      try {
+        const { supabase } = await import('./utils/supabaseClient');
+        if (!active) return;
+        // Defer async Auth work outside the auth callback's internal session lock.
+        const { data } = supabase.auth.onAuthStateChange((event, session) => {
+          setTimeout(() => { if (active) void sync(session, event); }, 0);
         });
         subscription = data.subscription;
-      } catch (error) {
-        console.error("Supabase session initialization failed:", error);
-      }
-    };
-
-    listenForSupabaseSession();
-    return () => {
-      active = false;
-      subscription?.unsubscribe();
-    };
-  }, [toSupabaseAppUser]);
+      } catch { if (active) void sync(null, 'INITIAL_SESSION'); }
+    })();
+    return () => { active = false; revision++; subscription?.unsubscribe(); };
+  }, [setPage, showToast]);
 
   const addOrder = useCallback(async (order) => {
-    try {
-      let accessToken = user?.token || "";
-      if (user?.authProvider === "supabase") {
-        const { supabase } = await import("./utils/supabaseClient");
-        const { data, error } = await supabase.auth.getSession();
-        if (error || !data.session?.access_token) {
-          throw new Error("Your sign-in session expired. Please login again.");
-        }
-        accessToken = data.session.access_token;
-      }
-      if (!accessToken) throw new Error("Please login before placing an order.");
-
-      const response = await fetch("/api/orders", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${accessToken}`
-        },
-        body: JSON.stringify(order)
-      });
-      if (!response.ok) {
-        const data = await response.json().catch(() => ({}));
-        const error = new Error(data.error || `Order API request failed with HTTP ${response.status}.`);
-        error.status = response.status;
-        error.details = data.details;
-        throw error;
-      }
-      const text = await response.text();
-      if (!text) throw new Error("Empty response");
-      const data = JSON.parse(text);
-      if (response.ok && data.order) {
-        setOrders(prev => [data.order, ...prev]);
-        return data.order;
-      }
-    } catch (error) {
-      if (user?.authProvider === "supabase") {
-        console.error("Authenticated order submission failed:", {
-          status: error.status,
-          message: error.message,
-          details: error.details
-        });
-      } else {
-        console.error("Order sync failed:", error);
-      }
-      if (user?.authProvider === "supabase") throw error;
+    if (!user) throw new Error("Please sign in before placing an order.");
+    const data = await orderApi('/api/orders', { method: 'POST', body: JSON.stringify(order) }, user);
+    if (!data.order?.id) throw new Error('The server did not confirm your order. Please check My Orders before retrying.');
+    if (data.guestToken) {
+      try { rememberGuestOrder(data.order.id, data.guestToken); } catch { /* Receipt still contains the token. */ }
     }
+    setOrders(prev => [data.order, ...prev.filter(o => o.id !== data.order.id)]);
+    return { ...data.order, guestToken: data.guestToken };
+  }, [user]);
 
-    setOrders(prev => {
-      const updated = [order, ...prev];
-      store.set("orders", updated);
-      return updated;
-    });
-    return order;
+  useEffect(() => {
+    setOrders([]);
+    if (!user) return;
+    let active = true, pending = false;
+    const load = async () => {
+      if (pending) return;
+      pending = true;
+      try {
+        const data = await orderApi('/api/customers/orders', {}, user);
+        if (active) setOrders(data.orders || []);
+      } catch { /* Customer pages display their own actionable load errors. */ }
+      finally { pending = false; }
+    };
+    load();
+    const timer = setInterval(load, 5000);
+    return () => { active = false; clearInterval(timer); };
   }, [user]);
 
   const handleLogout = useCallback(async () => {
@@ -280,8 +179,10 @@ export default function App() {
       }
 
       await store.del("session");
+      identity.current = null;
       setUser(null);
-      setPage("home");
+      setCurrentPage("home");
+      window.history.replaceState(null, '', '#home');
       showToast("Logged out successfully.", "success");
       return true;
     } catch (error) {
@@ -321,7 +222,7 @@ export default function App() {
 
   return (
     <div
-      className={page === "home" ? undefined : "bm-internal-page"}
+      className={renderedPage === "home" ? undefined : `bm-internal-page${["staff", "admin"].includes(renderedPage) ? "" : " bm-customer-page"}${["login", "register", "products", "contact"].includes(renderedPage) ? " bm-background-under-header" : ""}`}
       style={{
         minHeight: "100vh",
         fontFamily: "'Open Sans', sans-serif"
@@ -329,18 +230,19 @@ export default function App() {
     >
       <style>{globalStyles}</style>
       <Navbar
-        page={page}
+        page={renderedPage}
         setPage={setPage}
         user={user}
         onLogout={handleLogout}
       />
 
-      {page === "home" && <HomePage setPage={setPage} reviews={reviews} />}
-      {page === "products" && (
+      {renderedPage === "home" && <HomePage setPage={setPage} reviews={reviews} />}
+      {renderedPage === "products" && (
         <ProductsPage setPage={setPage} setSelectedProduct={setSelectedProduct} />
       )}
-      {page === "order" && (
+      {renderedPage === "order" && (
         <OrderPage
+          key={user?.id || "guest"}
           user={user}
           selectedProduct={selectedProduct}
           setPage={setPage}
@@ -348,8 +250,8 @@ export default function App() {
           showToast={showToast}
         />
       )}
-      {page === "track" && <TrackPage orders={orders} user={user} />}
-      {page === "myorders" && user && (
+      {renderedPage === "track" && <TrackPage orders={orders} user={user} />}
+      {renderedPage === "myorders" && user && (
         <MyOrdersPage
           orders={orders}
           user={user}
@@ -357,7 +259,7 @@ export default function App() {
           showToast={showToast}
         />
       )}
-      {page === "myorders" && !user && (
+      {renderedPage === "myorders" && !user && (
         <div style={{ textAlign: "center", padding: 80 }}>
           <p style={{ marginBottom: 16, color: C.gray400 }}>
             Please login to view your orders.
@@ -378,31 +280,25 @@ export default function App() {
           </button>
         </div>
       )}
-      {page === "contact" && <ContactPage showToast={showToast} />}
-      {page === "login" && (
-        <LoginPage setPage={setPage} onLogin={setUser} showToast={showToast} />
+      {renderedPage === "contact" && <ContactPage showToast={showToast} user={user} />}
+      {renderedPage === "login" && (
+        <LoginPage setPage={setPage} onLogin={completeSignIn} showToast={showToast} />
       )}
-      {page === "register" && (
-        <RegisterPage setPage={setPage} onLogin={setUser} showToast={showToast} />
+      {renderedPage === "register" && (
+        <RegisterPage setPage={setPage} onLogin={completeSignIn} showToast={showToast} />
       )}
-      {page === "profile" && user && (
+      {renderedPage === "profile" && user && (
         <ProfilePage user={user} setUser={setUser} showToast={showToast} />
       )}
-      {page === "admin" && user?.role === "admin" && (
-        <AdminPanel orders={orders} setOrders={setOrders} showToast={showToast} />
+      {['staff', 'admin'].includes(renderedPage) && (
+        <ProtectedDashboard key={renderedPage} user={user} page={renderedPage}>
+          {verifiedUser => renderedPage === 'admin'
+            ? <AdminPanel user={verifiedUser} showToast={showToast} />
+            : <div className="bm-staff-dashboard"><h1>Staff Dashboard</h1><StaffOrders user={verifiedUser} showToast={showToast} /></div>}
+        </ProtectedDashboard>
       )}
-      {page === "admin" && user?.role !== "admin" && (
-        <div
-          style={{
-            textAlign: "center",
-            padding: 80,
-            color: C.gray400
-          }}
-        >
-          <h2 style={{ fontFamily: "Montserrat" }}>Access Denied</h2>
-          <p style={{ marginTop: 8 }}>Admin login required.</p>
-        </div>
-      )}
+
+      {!['staff', 'admin'].includes(renderedPage) && <Chatbot setPage={setPage} />}
 
       {toast && (
         <Toast

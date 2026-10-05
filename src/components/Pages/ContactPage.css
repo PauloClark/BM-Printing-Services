@@ -2,7 +2,7 @@
   box-sizing: border-box;
   min-height: calc(100vh - 64px);
   margin: 0 auto;
-  padding: 42px 24px 48px;
+  padding: calc(var(--bm-navbar-height, 74px) + 42px) 24px 48px;
   background: linear-gradient(135deg, #fff8f8 0%, #fff 58%, #fbeded 100%);
 }
 
@@ -90,6 +90,42 @@
 
 .bm-contact-form-fields > button:hover { background: #6b1414; }
 
+/* Guest-only security challenge and post-send confirmation. */
+.bm-contact-turnstile {
+  display: flex;
+  width: 100%;
+  justify-content: center;
+  min-height: 65px;
+  overflow: hidden;
+}
+
+.bm-contact-turnstile .bm-turnstile-wrap {
+  margin: 0;
+}
+
+.bm-contact-turnstile .bm-turnstile-widget {
+  display: flex;
+  width: 100%;
+  min-width: 0;
+  justify-content: center;
+}
+
+.bm-contact-turnstile .bm-turnstile-widget iframe {
+  max-width: 100%;
+}
+
+.bm-contact-success {
+  margin: 0;
+  padding: 11px 14px;
+  border: 1px solid #b7ddb9;
+  border-radius: 5px;
+  background: #f1faf1;
+  color: #1b5e20;
+  font-size: 14px;
+  line-height: 1.45;
+  text-align: center;
+}
+
 .bm-contact-form-fields > button:focus-visible,
 .bm-contact-payment-actions a:focus-visible {
   outline: 3px solid rgba(139, 26, 26, 0.28);
@@ -112,23 +148,46 @@
 .bm-contact-info-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 18px 20px;
+  column-gap: clamp(24px, 4vw, 60px);
+  row-gap: 24px;
 }
 
 .bm-contact-info-item {
   display: grid;
   min-width: 0;
-  grid-template-columns: 32px minmax(0, 1fr);
+  grid-template-columns: 36px minmax(0, 1fr);
+  column-gap: 16px;
   align-items: start;
-  gap: 11px;
 }
 
-.bm-contact-info-item > img {
+.bm-contact-icon {
+  display: flex;
+  flex: 0 0 36px;
+  width: 36px;
+  height: 36px;
+  align-items: flex-start;
+  justify-content: center;
+  overflow: visible;
+}
+
+.bm-contact-icon img {
   display: block;
-  width: 32px;
-  height: 32px;
+  width: 28px;
+  height: 28px;
   object-fit: contain;
   object-position: center;
+}
+
+.bm-contact-icon--email img {
+  width: 26px;
+  height: 26px;
+}
+
+.bm-contact-icon--facebook img {
+  width: 46px;
+  height: 46px;
+  max-width: none;
+  max-height: none;
 }
 
 .bm-contact-info-item h3 {
@@ -136,11 +195,14 @@
   color: #251d1d;
   font-size: 12px;
   font-weight: 700;
+  line-height: 1.4;
 }
+
+.bm-contact-info-details { min-width: 0; }
 
 .bm-contact-info-item a,
 .bm-contact-info-item address,
-.bm-contact-info-item span {
+.bm-contact-info-details > span {
   color: #625b5b;
   font-size: 12px;
   font-style: normal;
@@ -150,7 +212,7 @@
 
 .bm-contact-info-item a { text-decoration: none; }
 .bm-contact-info-item a:hover { color: #8b1a1a; text-decoration: underline; text-underline-offset: 2px; }
-.bm-contact-info-item span { display: block; }
+.bm-contact-info-details > span { display: block; }
 
 .bm-contact-map {
   min-width: 0;
@@ -213,14 +275,14 @@
 
 @media (max-width: 900px) {
   .bm-contact-left { padding: 28px; }
-  .bm-contact-info-grid { grid-template-columns: minmax(0, 1fr); }
 }
 
 @media (max-width: 767px) {
-  .bm-contact-page { min-height: 0; padding: 24px 16px 36px; }
+  .bm-contact-page { min-height: 0; padding: calc(var(--bm-navbar-height, 64px) + 24px) 16px 36px; }
   .bm-contact-main { grid-template-columns: minmax(0, 1fr); }
   .bm-contact-left { padding: 24px 20px; }
   .bm-contact-form-section { padding-bottom: 24px; }
+  .bm-contact-info-grid { grid-template-columns: minmax(0, 1fr); column-gap: 0; }
   .bm-contact-map,
   .bm-contact-map iframe { min-height: 320px; height: 320px; }
   .bm-contact-payment { align-items: stretch; flex-direction: column; gap: 14px; padding: 18px; }
@@ -231,8 +293,7 @@
   .bm-contact-page { padding-inline: 12px; }
   .bm-contact-left { padding: 22px 16px; }
   .bm-contact-title { font-size: 30px; }
-  .bm-contact-name-email,
-  .bm-contact-info-grid { grid-template-columns: minmax(0, 1fr); }
+  .bm-contact-name-email { grid-template-columns: minmax(0, 1fr); }
   .bm-contact-map,
   .bm-contact-map iframe { min-height: 300px; height: 300px; }
   .bm-contact-payment-actions { grid-template-columns: minmax(0, 1fr); }

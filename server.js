@@ -1,24 +1,32 @@
+import phase3Routes from './server/routes/jobOrders.js';
+import orderArchiveRoutes from './server/routes/orderArchives.js';
+import { displayOrderStatus } from './shared/orderWorkflow.js';
+import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
-import dotenv from 'dotenv';
 import path from 'path';
 import fs from 'fs';
 import bcrypt from 'bcryptjs';
 import Joi from 'joi';
 import mongoose from 'mongoose';
 import { fileURLToPath } from 'url';
-import { connectMongo, seedCatalogAndAdmin, User, Product, Order, Inventory, Production, OrderFile, AuditLog } from './server/db.js';
+import { connectMongo, seedCatalogAndAdmin, User, Product, Order, Inventory, Production, OrderFile, AuditLog, StockMovement } from './server/db.js';
 import { generateDailyReport, getDefaultReportDate, getReportSummary, readReportFile, formatCurrency } from './server/reportService.js';
-import { generateToken, requireAuth, requireAdmin, optionalAuth } from './server/middleware/auth.js';
+import { generateToken, requireAuth, requireAdmin, optionalAuth, requireOrderStaff } from './server/middleware/auth.js';
 import { userRegister, userLogin, orderCreate, statusUpdate, orderIdParam, productCreate } from './server/middleware/validate.js';
 import rateLimit from 'express-rate-limit';
 import authRoutes from './server/routes/auth.js';
 import productRoutes from './server/routes/products.js';
 import orderRoutes from './server/routes/orders.js';
+import orderFileRoutes from './server/routes/orderFiles.js';
+import orderPaymentRoutes from './server/routes/orderPayments.js';
+import paymentRoutes from './server/routes/payments.js';
+import chatRoutes from './server/routes/chat.js';
+import turnstileRoutes from './server/routes/turnstile.js';
+import contactMessageRoutes from './server/routes/contactMessages.js';
 
 
-dotenv.config();
 
 const app = express();
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -117,7 +125,11 @@ function serializeOrder(order) {
     notes: order.notes,
     userId: order.customerId,
     createdAt: order.createdAt,
-    items: order.items || []
+    items: order.items || [],
+    pickedUpAt: order.pickedUpAt || null,
+    releasedBy: order.releasedBy || '',
+    releasedByName: order.releasedByName || '',
+    receivedByName: order.receivedByName || null
   };
 }
 
@@ -127,6 +139,21 @@ function serializeOrder(order) {
 authRoutes(app, authLimiter);
 productRoutes(app);
 orderRoutes(app);
+orderPaymentRoutes(app);
+paymentRoutes(app);
+chatRoutes(app);
+turnstileRoutes(app);
+contactMessageRoutes(app);
+phase3Routes(app);
+orderArchiveRoutes(app);
+orderFileRoutes(app, path.resolve(process.env.ORDER_UPLOAD_DIR || path.join(__dirname, 'uploads', 'orders')));
+// All status changes use the guarded order status endpoint; retire unsafe legacy mutations.
+app.use('/api/production', (req, res, next) => {
+  if (['POST', 'PATCH', 'PUT', 'DELETE'].includes(req.method)) {
+    return requireOrderStaff(req, res, () => res.status(409).json({ error: 'Use the Orders workflow to change processing status.' }));
+  }
+  return next();
+});
 
 app.get('/api/health', async (req, res) => {
   let dbStatus = 'disconnected';
@@ -139,124 +166,7 @@ app.get('/api/health', async (req, res) => {
 
 // ─── INVENTORY MANAGEMENT ───────────────────────────────────────────────
 
-app.post('/api/inventory/stock-in', requireAuth, async (req, res) => {
-  try {
-    const { material, quantity, supplier, notes } = req.body || {};
-    if (!material || quantity === undefined || quantity === null) {
-      return res.status(400).json({ error: 'Material and quantity are required.' });
-    }
-    const qty = Number(quantity);
-    if (qty <= 0) {
-      return res.status(400).json({ error: 'Quantity must be positive.' });
-    }
-
-    let inventory = await Inventory.findOne({ material });
-    if (inventory) {
-      inventory.quantity += qty;
-      if (supplier) inventory.supplier = supplier;
-      if (notes) inventory.notes = notes;
-      inventory.lastRestocked = new Date();
-      await inventory.save();
-    } else {
-      inventory = await Inventory.create({
-        material,
-        type: 'Other',
-        quantity: qty,
-        minimumStockLevel: 10,
-        supplier,
-        notes
-      });
-    }
-
-    res.json({ success: true, inventory });
-  } catch (error) {
-    console.error('Stock-in failed:', error);
-    res.status(500).json({ error: 'Unable to process stock-in.' });
-  }
-});
-
-app.post('/api/inventory/stock-out', requireAuth, async (req, res) => {
-  try {
-    const { material, quantity, notes } = req.body || {};
-    if (!material || quantity === undefined || quantity === null) {
-      return res.status(400).json({ error: 'Material and quantity are required.' });
-    }
-    const qty = Number(quantity);
-    if (qty <= 0) {
-      return res.status(400).json({ error: 'Quantity must be positive.' });
-    }
-
-    let inventory = await Inventory.findOne({ material });
-    if (!inventory) {
-      return res.status(404).json({ error: 'Inventory record not found.' });
-    }
-
-    if (inventory.quantity - qty < 0) {
-      return res.status(400).json({ error: 'Insufficient stock.' });
-    }
-
-    inventory.quantity -= qty;
-    if (notes) inventory.notes = notes;
-    await inventory.save();
-
-    res.json({ success: true, inventory });
-  } catch (error) {
-    console.error('Stock-out failed:', error);
-    res.status(500).json({ error: 'Unable to process stock-out.' });
-  }
-});
-
-app.get('/api/inventory', requireAuth, async (req, res) => {
-  try {
-    const inventory = await Inventory.find({}).sort({ material: 1 });
-    res.json({ success: true, inventory });
-  } catch (error) {
-    console.error('Failed to fetch inventory:', error);
-    res.status(500).json({ error: 'Unable to fetch inventory.' });
-  }
-});
-
-app.patch('/api/inventory/adjust', requireAuth, async (req, res) => {
-  try {
-    const { material, quantity, notes } = req.body || {};
-    if (!material || quantity === undefined) {
-      return res.status(400).json({ error: 'Material and quantity are required.' });
-    }
-    const qty = Number(quantity);
-    if (qty < 0) {
-      return res.status(400).json({ error: 'Quantity must be positive.' });
-    }
-
-    let inventory = await Inventory.findOne({ material });
-    if (!inventory) {
-      return res.status(404).json({ error: 'Inventory record not found.' });
-    }
-
-    inventory.quantity = qty;
-    if (notes !== undefined) inventory.notes = notes;
-    await inventory.save();
-
-    res.json({ success: true, inventory });
-  } catch (error) {
-    console.error('Inventory adjustment failed:', error);
-    res.status(500).json({ error: 'Unable to adjust inventory.' });
-  }
-});
-
-app.get('/api/inventory/low-stock', requireAuth, async (req, res) => {
-  try {
-    const allInventory = await Inventory.find({}).sort({ material: 1 });
-    const lowStock = allInventory.filter(i => i.quantity < i.minimumStockLevel);
-    res.json({ success: true, inventory: lowStock });
-  } catch (error) {
-    console.error('Failed to fetch low-stock inventory:', error);
-    res.status(500).json({ error: 'Unable to fetch low-stock inventory.' });
-  }
-});
-
-// ─── PRODUCTION MANAGEMENT ──────────────────────────────────────────────
-
-app.post('/api/production/queue', requireAuth, async (req, res) => {
+app.post('/api/production/queue', requireOrderStaff, async (req, res) => {
   try {
     const { orderId, priority } = req.body || {};
     if (!orderId) {
@@ -285,7 +195,7 @@ app.post('/api/production/queue', requireAuth, async (req, res) => {
   }
 });
 
-app.patch('/api/production/start', requireAuth, async (req, res) => {
+app.patch('/api/production/start', requireOrderStaff, async (req, res) => {
   try {
     const { orderId } = req.body || {};
     if (!orderId) {
@@ -323,7 +233,7 @@ app.patch('/api/production/start', requireAuth, async (req, res) => {
   }
 });
 
-app.patch('/api/production/quality-check', requireAuth, async (req, res) => {
+app.patch('/api/production/quality-check', requireOrderStaff, async (req, res) => {
   try {
     const { orderId, qualityStatus } = req.body || {};
     if (!orderId || !qualityStatus) {
@@ -338,7 +248,7 @@ app.patch('/api/production/quality-check', requireAuth, async (req, res) => {
     order.status = 'Quality Check';
     await order.save();
 
-    const production = await Production.findOne({ orderId });
+    const production = await Production.findOne({ orderId, ...(req.user.role === 'admin' ? {} : { $or: [{ phase3: { $ne: true } }, { assignedEmployee: req.user.id }] }) });
     if (!production) {
       return res.status(404).json({ error: 'Production record not found.' });
     }
@@ -355,7 +265,7 @@ app.patch('/api/production/quality-check', requireAuth, async (req, res) => {
   }
 });
 
-app.patch('/api/production/ready', requireAuth, async (req, res) => {
+app.patch('/api/production/ready', requireOrderStaff, async (req, res) => {
   try {
     const { orderId } = req.body || {};
     if (!orderId) {
@@ -386,7 +296,7 @@ app.patch('/api/production/ready', requireAuth, async (req, res) => {
   }
 });
 
-app.patch('/api/production/complete', requireAuth, async (req, res) => {
+app.patch('/api/production/complete', requireOrderStaff, async (req, res) => {
   try {
     const { orderId } = req.body || {};
     if (!orderId) {
@@ -419,7 +329,7 @@ app.patch('/api/production/complete', requireAuth, async (req, res) => {
   }
 });
 
-app.patch('/api/production/delay', requireAuth, async (req, res) => {
+app.patch('/api/production/delay', requireOrderStaff, async (req, res) => {
   try {
     const { orderId, delayReason } = req.body || {};
     if (!orderId) {
@@ -451,7 +361,7 @@ app.patch('/api/production/delay', requireAuth, async (req, res) => {
   }
 });
 
-app.get('/api/production/:orderId', requireAuth, async (req, res) => {
+app.get('/api/production/:orderId', requireOrderStaff, async (req, res) => {
   try {
     const { orderId } = req.params;
     const production = await Production.findOne({ orderId });
@@ -468,9 +378,9 @@ app.get('/api/production/:orderId', requireAuth, async (req, res) => {
   }
 });
 
-app.get('/api/production', requireAuth, async (req, res) => {
+app.get('/api/production', requireOrderStaff, async (req, res) => {
   try {
-    const productions = await Production.find({}).sort({ 'startTime': -1 });
+    const productions = await Production.find(req.user.role === 'admin' ? {} : { $or: [{ phase3: { $ne: true } }, { assignedEmployee: req.user.id }] }).sort({ 'startTime': -1 });
     res.json({ success: true, productions });
   } catch (error) {
     console.error('Failed to fetch production records:', error);
@@ -524,7 +434,7 @@ app.get('/api/admin/reports/currency', requireAdmin, async (req, res) => {
 
 // ─── DASHBOARD ROUTES ─────────────────────────────────────────────────────
 
-app.get("/api/dashboard/summary", requireAuth, async (req, res) => {
+app.get("/api/dashboard/summary", requireAdmin, async (req, res) => {
   try {
     const orders = await Order.find({}).sort({ createdAt: -1 });
 
@@ -558,8 +468,8 @@ app.get("/api/dashboard/summary", requireAuth, async (req, res) => {
     // Orders by production stage
     const productionCounts = {
       pending: orders.filter(o => o.status === "Pending" || o.status === "Quoted" || o.status === "Confirmed").length,
-      inProduction: orders.filter(o => o.status === "In Production").length,
-      ready: orders.filter(o => o.status === "Ready").length,
+      inProduction: orders.filter(o => displayOrderStatus(o.status) === "Processing").length,
+      ready: orders.filter(o => displayOrderStatus(o.status) === "Ready for Pickup").length,
       completed: orders.filter(o => o.status === "Completed").length,
       cancelled: orders.filter(o => o.status === "Cancelled").length
     };
@@ -599,7 +509,7 @@ app.get("/api/dashboard/summary", requireAuth, async (req, res) => {
   }
 });
 
-app.get("/api/ai/daily-summary", requireAuth, async (req, res) => {
+app.get("/api/ai/daily-summary", requireAdmin, async (req, res) => {
   try {
     const today = new Date();
     const dateString = today.getFullYear() + "-" + String(today.getMonth() + 1).padStart(2, "0") + "-" + String(today.getDate()).padStart(2, "0");
@@ -679,7 +589,7 @@ app.get('/api/customers/profile', requireAuth, async (req, res) => {
 
 // ─── PRINTING FILE MANAGEMENT ────────────────────────────────────────────
 
-app.post('/api/files/upload', requireAuth, async (req, res) => {
+app.post('/api/files/upload', requireAdmin, async (req, res) => {
   try {
     const { orderId, filename, originalName, fileType, fileSize, storagePath } = req.body || {};
     if (!orderId || !filename || !originalName || !fileType || fileSize === undefined || !storagePath) {
@@ -714,7 +624,7 @@ app.post('/api/files/upload', requireAuth, async (req, res) => {
   }
 });
 
-app.get('/api/files/:orderId', requireAuth, async (req, res) => {
+app.get('/api/files/:orderId', requireOrderStaff, async (req, res) => {
   try {
     const { orderId } = req.params;
     const files = await OrderFile.find({ orderId }).sort({ uploadedAt: -1 });
@@ -726,7 +636,7 @@ app.get('/api/files/:orderId', requireAuth, async (req, res) => {
   }
 });
 
-app.patch('/api/files/:fileId/approve', requireAuth, async (req, res) => {
+app.patch('/api/files/:fileId/approve', requireAdmin, async (req, res) => {
   try {
     const { fileId } = req.params;
     const { approved, notes } = req.body || {};
@@ -748,7 +658,7 @@ app.patch('/api/files/:fileId/approve', requireAuth, async (req, res) => {
   }
 });
 
-app.patch('/api/files/:fileId/production-ready', requireAuth, async (req, res) => {
+app.patch('/api/files/:fileId/production-ready', requireAdmin, async (req, res) => {
   try {
     const { fileId } = req.params;
 
@@ -769,7 +679,7 @@ app.patch('/api/files/:fileId/production-ready', requireAuth, async (req, res) =
   }
 });
 
-app.delete('/api/files/:fileId', requireAuth, async (req, res) => {
+app.delete('/api/files/:fileId', requireAdmin, async (req, res) => {
   try {
     const { fileId } = req.params;
 
@@ -786,7 +696,7 @@ app.delete('/api/files/:fileId', requireAuth, async (req, res) => {
   }
 });
 
-app.post('/api/notifications/test', requireAuth, async (req, res) => {
+app.post('/api/notifications/test', requireAdmin, async (req, res) => {
   try {
     const { userId, type, title, message } = req.body || {};
     // In a real system, this would send via email, in-app, etc.
@@ -800,7 +710,7 @@ app.post('/api/notifications/test', requireAuth, async (req, res) => {
   }
 });
 
-app.post('/api/audit/log', requireAuth, async (req, res) => {
+app.post('/api/audit/log', requireAdmin, async (req, res) => {
   try {
     const { action, module: mod, resourceType, resourceId, previousValue, newValue, result, metadata } = req.body || {};
 
@@ -830,7 +740,7 @@ app.post('/api/audit/log', requireAuth, async (req, res) => {
   }
 });
 
-app.get("/api/ai/insights/sales", requireAuth, async (req, res) => {
+app.get("/api/ai/insights/sales", requireAdmin, async (req, res) => {
   try {
     const orders = await Order.find({}).sort({ createdAt: -1 });
 
@@ -888,7 +798,7 @@ app.get("/api/ai/insights/sales", requireAuth, async (req, res) => {
   }
 });
 
-app.get("/api/ai/forecast/popular-services", requireAuth, async (req, res) => {
+app.get("/api/ai/forecast/popular-services", requireAdmin, async (req, res) => {
   try {
     const orders = await Order.find({}).sort({ createdAt: -1 });
 
@@ -935,7 +845,7 @@ app.get("/api/ai/forecast/popular-services", requireAuth, async (req, res) => {
   }
 });
 
-app.get("/api/system/health", requireAuth, async (req, res) => {
+app.get("/api/system/health", requireAdmin, async (req, res) => {
   try {
     let database = 'disconnected';
     try {
@@ -972,7 +882,7 @@ app.get("/api/system/health", requireAuth, async (req, res) => {
   }
 });
 
-app.get("/api/system/backup-status", requireAuth, async (req, res) => {
+app.get("/api/system/backup-status", requireAdmin, async (req, res) => {
   try {
     let reportsDir = 'unknown';
     let reportCount = 0;
@@ -1002,7 +912,7 @@ app.get("/api/system/backup-status", requireAuth, async (req, res) => {
   }
 });
 
-app.get("/api/ai/insights/production", requireAuth, async (req, res) => {
+app.get("/api/ai/insights/production", requireAdmin, async (req, res) => {
   try {
     const orders = await Order.find({}).sort({ createdAt: -1 });
 
@@ -1019,7 +929,7 @@ app.get("/api/ai/insights/production", requireAuth, async (req, res) => {
       });
     }
 
-    const inProduction = orders.filter(o => o.status === 'In Production').length;
+    const inProduction = orders.filter(o => displayOrderStatus(o.status) === 'Processing').length;
     const completed = orders.filter(o => o.status === 'Completed').length;
     const delayed = orders.filter(o => o.status === 'Delayed').length;
 
@@ -1042,7 +952,7 @@ app.get("/api/ai/insights/production", requireAuth, async (req, res) => {
   }
 });
 
-app.get("/api/search/orders", requireAuth, async (req, res) => {
+app.get("/api/search/orders", requireOrderStaff, async (req, res) => {
   try {
     const { query, status, customer, service, startDate, endDate } = req.query;
     const filter = {};
@@ -1072,7 +982,7 @@ app.get("/api/search/orders", requireAuth, async (req, res) => {
   }
 });
 
-app.get("/api/search/customers", requireAuth, async (req, res) => {
+app.get("/api/search/customers", requireAdmin, async (req, res) => {
   try {
     const { query } = req.query;
     const filter = {};
@@ -1094,7 +1004,7 @@ app.get("/api/search/customers", requireAuth, async (req, res) => {
   }
 });
 
-app.get("/api/employees", requireAuth, async (req, res) => {
+app.get("/api/employees", requireAdmin, async (req, res) => {
   try {
     const roles = ["admin", "manager", "cashier", "production", "customer"];
     const employees = roles.map(function(role) {
@@ -1114,7 +1024,7 @@ app.get("/api/employees", requireAuth, async (req, res) => {
   }
 });
 
-app.get("/api/employees/:role", requireAuth, async (req, res) => {
+app.get("/api/employees/:role", requireAdmin, async (req, res) => {
   try {
     const role = req.params.role;
     const validRoles = ["admin", "manager", "cashier", "production", "customer"];
@@ -1138,7 +1048,7 @@ app.get("/api/employees/:role", requireAuth, async (req, res) => {
   }
 });
 
-app.post("/api/quotations", requireAuth, async (req, res) => {
+app.post("/api/quotations", requireAdmin, async (req, res) => {
   try {
     const { customerId, customerName, customerEmail, items, notes } = req.body || {};
     if (!customerId || !customerName || !items || !items.length) {
@@ -1175,7 +1085,7 @@ app.post("/api/quotations", requireAuth, async (req, res) => {
   }
 });
 
-app.patch("/api/quotations/:quotationId/approve", requireAuth, async (req, res) => {
+app.patch("/api/quotations/:quotationId/approve", requireAdmin, async (req, res) => {
   try {
     const { quotationId } = req.params;
 
@@ -1186,7 +1096,7 @@ app.patch("/api/quotations/:quotationId/approve", requireAuth, async (req, res) 
   }
 });
 
-app.post("/api/invoices", requireAuth, async (req, res) => {
+app.post("/api/invoices", requireAdmin, async (req, res) => {
   try {
     const { quotationId, orderId, items, taxRate, total } = req.body || {};
     if (!quotationId || !orderId || !total) {
@@ -1222,7 +1132,7 @@ app.post("/api/invoices", requireAuth, async (req, res) => {
   }
 });
 
-app.patch("/api/payments", requireAuth, async (req, res) => {
+app.patch("/api/payments", requireAdmin, async (req, res) => {
   try {
     const { orderId, amount, paymentMethod, transactionReference } = req.body || {};
     if (!orderId || !amount) {
@@ -1261,7 +1171,7 @@ app.patch("/api/payments", requireAuth, async (req, res) => {
   }
 });
 
-app.patch("/api/payments/:paymentId/verify", requireAuth, async (req, res) => {
+app.patch("/api/payments/:paymentId/verify", requireAdmin, async (req, res) => {
   try {
     const { paymentId } = req.params;
 
@@ -1326,7 +1236,7 @@ app.get("/api/feedback/summary", requireAuth, async (req, res) => {
 });
 
 
-app.get("/api/bi/dashboard", requireAuth, async (req, res) => {
+app.get("/api/bi/dashboard", requireAdmin, async (req, res) => {
   try {
     const orders = await Order.find({}).sort({ createdAt: -1 });
 
@@ -1369,7 +1279,7 @@ app.get("/api/bi/dashboard", requireAuth, async (req, res) => {
       },
       production: {
         totalOrders: totalOrders,
-        inProduction: orders.filter(o => o.status === "In Production").length,
+        inProduction: orders.filter(o => displayOrderStatus(o.status) === "Processing").length,
         completed: completedOrders,
         message: "Production data would be fetched from Production model"
       },
@@ -1387,7 +1297,7 @@ app.get("/api/bi/dashboard", requireAuth, async (req, res) => {
   }
 });
 
-app.get("/api/bi/analytics", requireAuth, async (req, res) => {
+app.get("/api/bi/analytics", requireAdmin, async (req, res) => {
   try {
     const orders = await Order.find({}).sort({ createdAt: -1 });
 
@@ -1462,7 +1372,7 @@ function validateBody(schema) {
 }
 
 // Authentication bypass test endpoint
-app.get("/api/security/test/auth-bypass", requireAuth, async (req, res) => {
+app.get("/api/security/test/auth-bypass", requireAdmin, async (req, res) => {
   try {
     res.json({ success: true, data: { message: "Authentication gate is active", userRole: req.user.role, userId: req.user.id } });
   } catch (error) {
@@ -1471,7 +1381,7 @@ app.get("/api/security/test/auth-bypass", requireAuth, async (req, res) => {
 });
 
 // Authorization test endpoint
-app.get("/api/security/test/authorize", requireAuth, async (req, res) => {
+app.get("/api/security/test/authorize", requireAdmin, async (req, res) => {
   try {
     const userRole = req.user.role;
     const hasAdminAccess = userRole === 'admin';
@@ -1482,7 +1392,7 @@ app.get("/api/security/test/authorize", requireAuth, async (req, res) => {
 });
 
 // IDOR prevention test - ensures users can only access their own records
-app.get("/api/security/test/idors", requireAuth, async (req, res) => {
+app.get("/api/security/test/idors", requireAdmin, async (req, res) => {
   try {
     const userEmail = req.user.email;
     res.json({ success: true, data: { userEmail, idorPrevention: "Orders are filtered by authenticated user email" } });
@@ -1501,7 +1411,7 @@ app.post("/api/security/test/input-validation", validateBody(Joi.object({ testFi
 });
 
 // Rate limiting test endpoint
-app.get("/api/security/test/rate-limit", requireAuth, async (req, res) => {
+app.get("/api/security/test/rate-limit", requireAdmin, async (req, res) => {
   try {
     res.json({ success: true, data: { message: "Rate limiter is configured", timestamp: new Date() } });
   } catch (error) {
@@ -1510,7 +1420,7 @@ app.get("/api/security/test/rate-limit", requireAuth, async (req, res) => {
 });
 
 // SQL injection prevention test
-app.get("/api/security/test/sql-injection", requireAuth, async (req, res) => {
+app.get("/api/security/test/sql-injection", requireAdmin, async (req, res) => {
   try {
     const queryParam = req.query.search || "";
     res.json({ success: true, data: { searchTerm: queryParam, sqlSafe: "Parameterized queries used" } });
@@ -1519,7 +1429,7 @@ app.get("/api/security/test/sql-injection", requireAuth, async (req, res) => {
   }
 });
 
-app.get("/api/security/audit-logs", requireAuth, async (req, res) => {
+app.get("/api/security/audit-logs", requireAdmin, async (req, res) => {
   try {
     const logs = await AuditLog.find({}).sort({ timestamp: -1 }).limit(100);
     res.json({ success: true, data: logs });
@@ -1529,7 +1439,7 @@ app.get("/api/security/audit-logs", requireAuth, async (req, res) => {
   }
 });
 
-app.get("/api/security/permissions", requireAuth, async (req, res) => {
+app.get("/api/security/permissions", requireAdmin, async (req, res) => {
   try {
     const userRole = req.user.role;
     const permissions = {
@@ -1545,46 +1455,6 @@ app.get("/api/security/permissions", requireAuth, async (req, res) => {
     res.json({ success: true, data: { userRole, permissions: userPermissions } });
   } catch (error) {
     res.status(500).json({ error: "Failed to fetch permissions." });
-  }
-});
-
-// Serve uploaded files
-app.get("/uploads/orders/:filename", requireAuth, async (req, res) => {
-  try {
-    const filename = path.basename(req.params.filename);
-    if (filename !== req.params.filename) {
-      return res.status(400).json({ error: 'Invalid filename.' });
-    }
-    const filePath = path.join(__dirname, 'uploads', 'orders', filename);
-
-    // Verify file is within uploads directory (prevent path traversal)
-    const resolved = path.resolve(filePath);
-    const uploadsRoot = path.resolve(__dirname, 'uploads');
-    if (!resolved.startsWith(uploadsRoot)) {
-      return res.status(403).json({ error: 'Access denied.' });
-    }
-
-    if (!fs.existsSync(filePath)) {
-      return res.status(404).json({ error: 'File not found.' });
-    }
-
-    const ext = filename.split('.').pop().toLowerCase();
-    const contentTypes = {
-      'jpg': 'image/jpeg',
-      'jpeg': 'image/jpeg',
-      'png': 'image/png',
-      'webp': 'image/webp',
-      'pdf': 'application/pdf',
-      'svg': 'image/svg+xml'
-    };
-    const contentType = contentTypes[ext] || 'application/octet-stream';
-
-    res.setHeader('Content-Type', contentType);
-    res.setHeader('Content-Disposition', `inline; filename="${filename}"`);
-    res.sendFile(filePath);
-  } catch (error) {
-    console.error('File serving failed:', error);
-    res.status(500).json({ error: 'Unable to serve file.' });
   }
 });
 

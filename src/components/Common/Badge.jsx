@@ -1,7 +1,9 @@
+import { displayOrderStatus } from '../../../shared/orderWorkflow';
 import { C } from "../../constants/colors";
 import { STATUS_COLORS } from "../../constants/products";
 
 export const Badge = ({ status }) => {
+  status = displayOrderStatus(status);
   const s = STATUS_COLORS[status] || STATUS_COLORS["Pending"];
   return (
     <span

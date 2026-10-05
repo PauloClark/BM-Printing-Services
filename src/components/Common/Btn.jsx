@@ -1,6 +1,6 @@
 import { C } from "../../constants/colors";
 
-export const Btn = ({ children, onClick, variant = "primary", size = "md", style: sx = {}, disabled, loading }) => {
+export const Btn = ({ children, onClick, variant = "primary", size = "md", style: sx = {}, disabled, loading, "aria-current": ariaCurrent }) => {
   const base = {
     display: "inline-flex",
     alignItems: "center",
@@ -31,7 +31,7 @@ export const Btn = ({ children, onClick, variant = "primary", size = "md", style
   };
 
   return (
-    <button
+    <button aria-current={ariaCurrent}
       style={{ ...base, ...sizes[size], ...variants[variant], ...sx }}
       onClick={onClick}
       disabled={disabled || loading}

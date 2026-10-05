@@ -1,3 +1,5 @@
+import { supabaseAppUser } from '../../../shared/roles';
+import { orderApi } from '../../utils/orderApi';
 import { useState } from "react";
 import { C } from "../../constants/colors";
 import { store } from "../../utils/storage";
@@ -23,31 +25,47 @@ export const ProfilePage = ({ user, setUser, showToast }) => {
   const [avatarLoadFailed, setAvatarLoadFailed] = useState(false);
 
   const saveProfile = async () => {
+    if (!form.name.trim()) { showToast('Enter your name.', 'error'); return; }
     setSaving(true);
-    const updated = { ...user, ...form, ...(isSupabaseUser ? { email: user.email } : {}) };
-    await store.set(`user:${user.id}`, updated);
-    setUser(updated);
-    showToast("Profile updated!", "success");
-    setSaving(false);
+    try {
+      let updated;
+      if (isSupabaseUser) {
+        const { supabase } = await import('../../utils/supabaseClient');
+        const { data, error } = await supabase.auth.updateUser({ data: {
+          full_name: form.name.trim(), phone: form.phone.trim(), address: form.address.trim()
+        } });
+        if (error) throw error;
+        updated = supabaseAppUser(data.user);
+      } else {
+        const data = await orderApi('/api/auth/profile', { method: 'PATCH', body: JSON.stringify(form) }, user);
+        updated = { ...user, ...data.user };
+        await store.set('session', updated);
+      }
+      setUser(updated);
+      showToast('Profile updated!', 'success');
+    } catch (error) { showToast(error.message || 'Unable to save profile.', 'error'); }
+    finally { setSaving(false); }
   };
 
   const changePassword = async () => {
-    if (pwForm.new !== pwForm.confirm) {
-      showToast("Passwords don't match", "error");
-      return;
+    if (pwForm.new !== pwForm.confirm || pwForm.new.length < 8) {
+      showToast('Passwords must match and contain at least 8 characters.', 'error'); return;
     }
-    if (pwForm.new.length < 6) {
-      showToast("Password must be at least 6 characters", "error");
-      return;
-    }
-    const stored = await store.get(`user:${user.id}`);
-    if (stored?.password && stored.password !== pwForm.current) {
-      showToast("Current password is incorrect", "error");
-      return;
-    }
-    await store.set(`user:${user.id}`, { ...stored, password: pwForm.new });
-    showToast("Password changed!", "success");
-    setPwForm({ current: "", new: "", confirm: "" });
+    setSaving(true);
+    try {
+      if (isSupabaseUser) {
+        const { supabase } = await import('../../utils/supabaseClient');
+        const { error: verifyError } = await supabase.auth.signInWithPassword({ email: user.email, password: pwForm.current });
+        if (verifyError) throw verifyError;
+        const { error } = await supabase.auth.updateUser({ password: pwForm.new });
+        if (error) throw error;
+      } else {
+        await orderApi('/api/auth/password', { method: 'PATCH', body: JSON.stringify({ currentPassword: pwForm.current, newPassword: pwForm.new }) }, user);
+      }
+      showToast('Password changed!', 'success');
+      setPwForm({ current: '', new: '', confirm: '' });
+    } catch (error) { showToast(error.message || 'Unable to update password.', 'error'); }
+    finally { setSaving(false); }
   };
 
   return (
@@ -129,7 +147,7 @@ export const ProfilePage = ({ user, setUser, showToast }) => {
                   marginTop: 4
                 }}
               >
-                {user?.role === "admin" ? "Administrator" : "Customer"}
+                {user?.role === "admin" ? "Administrator" : user?.role === "staff" ? "Staff" : "Customer"}
               </div>
             </div>
           </div>
@@ -181,7 +199,7 @@ export const ProfilePage = ({ user, setUser, showToast }) => {
           </div>
         </Card>
 
-        {!isSupabaseUser && <Card>
+        {(!isSupabaseUser || user.hasPassword) && <Card>
           <h3
             style={{
               fontFamily: "Montserrat",
@@ -210,7 +228,7 @@ export const ProfilePage = ({ user, setUser, showToast }) => {
               value={pwForm.confirm}
               onChange={v => setPwForm(p => ({ ...p, confirm: v }))}
             />
-            <Btn variant="secondary" onClick={changePassword}>
+            <Btn variant="secondary" onClick={changePassword} loading={saving}>
               Update Password
             </Btn>
           </div>

@@ -1,26 +1,52 @@
 .bm-navbar {
+  position: fixed;
+  top: 0;
+  right: 0;
+  left: 0;
+  z-index: 100;
+  width: 100%;
   isolation: isolate;
-  background: linear-gradient(90deg, #f6e7e9 0%, #fff 26%, #fff 74%, #f6e7e9 100%);
+  border-bottom: none;
+  box-shadow: none;
+  background: rgba(255, 255, 255, 0.18);
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+  animation: bm-navbar-enter 520ms cubic-bezier(0.22, 1, 0.36, 1) both;
 }
 
-/* Edge artwork is independent of the logo, links and mobile dropdown. */
-.bm-navbar::before, .bm-navbar::after {
-  content: "";
-  position: absolute;
-  z-index: -1;
-  top: 0;
-  bottom: 0;
-  width: clamp(40px, 12vw, 230px);
-  pointer-events: none;
-  background: linear-gradient(112deg, #211116 0% 8%, #67131e 8% 17%, #a42532 17% 23%, #e6bec3 23%, #f5e7e9 57%, #ffffff00 85%);
-  clip-path: polygon(0 0, 100% 0, 66% 100%, 0 100%);
+.bm-navbar::before,
+.bm-navbar::after {
+  display: none;
 }
-.bm-navbar::before { left: 0; }
-.bm-navbar::after { right: 0; transform: rotate(180deg); }
+
+@keyframes bm-navbar-enter {
+  from { opacity: 0; transform: translateY(-8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.bm-navbar .bm-navbar-link {
+  border-radius: 0 !important;
+  box-shadow: none !important;
+  text-shadow: 0 1px 2px rgba(255, 255, 255, 0.75);
+}
+
+.bm-navbar .bm-navbar-links > button[aria-current="page"] {
+  box-shadow: inset 0 -2px #8b1a1a !important;
+}
+
+.bm-navbar .bm-navbar-link:not([aria-current="page"]):hover,
+.bm-navbar .bm-navbar-link[aria-current="page"]:hover {
+  background: rgba(139, 26, 26, 0.07) !important;
+  color: #751923 !important;
+}
+
+.bm-navbar .bm-navbar-toggle {
+  border-color: rgba(45, 37, 38, 0.4);
+  background: rgba(255, 255, 255, 0.78);
+  color: #2d2526;
+}
+
 .bm-navbar-row { position: relative; }
-.bm-navbar-link:not([aria-current="page"]):hover { background: #f4e9eb !important; color: #751923 !important; }
-.bm-navbar-link[aria-current="page"] { box-shadow: 0 2px 3px #4d11131a; }
-.bm-navbar-link[aria-current="page"]:hover { background: #70151c !important; }
 .bm-navbar-links { display: flex; gap: 2px; align-items: center; flex-wrap: nowrap; }
 .bm-navbar-links > button { white-space: nowrap; }
 .bm-navbar-toggle { display: none; }
@@ -122,6 +148,7 @@
   .bm-logout-backdrop,
   .bm-logout-dialog { transition: none; }
   .bm-logout-spinner { animation-duration: 1.5s; }
+  .bm-navbar { animation: none; }
 }
 
 @media (min-width: 768px) and (max-width: 1023px) {
@@ -132,7 +159,6 @@
 
 @media (max-width: 767px) {
   .bm-navbar-row { padding-inline: 16px !important; height: 64px !important; }
-  .bm-navbar::before, .bm-navbar::after { width: 40px; opacity: 0.65; }
   .bm-navbar-toggle {
     display: inline-flex;
     align-items: center;
@@ -159,4 +185,41 @@
   }
   .bm-navbar-links.is-open { display: flex; flex-direction: column; align-items: stretch; gap: 6px; }
   .bm-navbar-links > button { min-height: 44px; text-align: left; justify-content: flex-start !important; padding: 12px 16px !important; }
+}
+
+/* Signed-in controls share one compact outline treatment. */
+.bm-navbar-links:has(.bm-account-control) { min-width: 0; }
+.bm-account-control {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 1 auto;
+  min-width: 0;
+  height: 40px;
+  gap: 8px;
+  padding: 8px 10px;
+  border: 1px solid rgba(45, 37, 38, 0.28);
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.18);
+  color: #2d2526;
+  font-family: Montserrat, sans-serif;
+  font-size: 13px;
+  font-weight: 600;
+  transition: background-color 200ms ease, border-color 200ms ease, color 200ms ease;
+}
+.bm-account-icon { width: 18px; height: 18px; flex: 0 0 18px; }
+.bm-account-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bm-account-control--profile .bm-account-label { max-width: 100px; }
+.bm-account-control:hover { background: rgba(139, 26, 26, 0.07); border-color: rgba(139, 26, 26, 0.5); }
+.bm-account-control--logout { color: #8b1a1a; border-color: rgba(139, 26, 26, 0.35); }
+.bm-account-control--logout:hover { background: #8b1a1a; border-color: #8b1a1a; color: #fff; }
+@media (min-width: 768px) and (max-width: 1023px) {
+  .bm-account-control { gap: 7px; }
+}
+@media (max-width: 767px) {
+  .bm-account-control { height: auto; flex-shrink: 0; }
+  .bm-account-control--profile .bm-account-label { max-width: 100%; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .bm-account-control { transition: none; }
 }

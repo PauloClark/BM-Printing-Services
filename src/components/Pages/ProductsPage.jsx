@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
-import { C } from "../../constants/colors";
-import { PRODUCTS, CATEGORIES } from "../../constants/products";
-import { Card } from "../Common/Card";
+
+import { PRODUCTS } from "../../constants/products";
+
 import { Btn } from "../Common/Btn";
 import "./ProductsPage.css";
 
@@ -69,159 +69,67 @@ export const ProductsPage = ({ setPage, setSelectedProduct }) => {
         p.description.toLowerCase().includes(search.toLowerCase()))
   );
 
+  const categories = [...new Set(displayProducts.map(product => product.category))];
   return (
-    <div
-      style={{
-        maxWidth: 1200,
-        margin: "0 auto",
-        padding: "40px 24px"
-      }}
-      className="fade-in"
-    >
-      <div style={{ marginBottom: 32 }}>
-        <h1
-          style={{
-            fontFamily: "Montserrat",
-            fontWeight: 800,
-            fontSize: 30,
-            marginBottom: 8
-          }}
-        >
-          Our Products
-        </h1>
-        <p style={{ color: C.gray600 }}>
-          Browse our full catalog of custom printing services
-        </p>
-      </div>
-
-      <div
-        style={{
-          display: "flex",
-          gap: 12,
-          marginBottom: 24,
-          flexWrap: "wrap",
-          alignItems: "center"
-        }}
-      >
-        <input
-          value={search}
-          onChange={e => setSearch(e.target.value)}
-          placeholder="Search products..."
-          style={{
-            padding: "10px 16px",
-            border: `1.5px solid ${C.gray200}`,
-            borderRadius: 8,
-            fontSize: 14,
-            flex: 1,
-            minWidth: 200
-          }}
-        />
-        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-          {CATEGORIES.map(c => (
-            <button
-              key={c}
-              onClick={() => setCat(c)}
-              style={{
-                padding: "8px 16px",
-                borderRadius: 20,
-                border: `1.5px solid ${cat === c ? C.red : C.gray200}`,
-                background: cat === c ? C.red : C.white,
-                color: cat === c ? "#fff" : C.gray600,
-                fontSize: 13,
-                fontWeight: 600,
-                cursor: "pointer"
-              }}
-            >
-              {c}
-            </button>
+    <main className="bm-catalog" aria-labelledby="bm-catalog-title">
+      <div className="bm-catalog__decoration" aria-hidden="true" />
+      <div className="bm-catalog__inner">
+        <header className="bm-catalog__intro">
+          <div className="bm-catalog__heading">
+            <p className="bm-catalog__eyebrow">OUR PRODUCTS</p>
+            <h1 id="bm-catalog-title">Printing <span>Solutions</span></h1>
+            <p className="bm-catalog__subtitle">High quality prints for your business, school, and personal needs.</p>
+          </div>
+          <div className="bm-catalog__controls" role="search" aria-label="Find products">
+            <div className="bm-catalog__search">
+              <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="1.7" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5" /><path d="m16 16 4.5 4.5" /></svg>
+              <input type="search" aria-label="Search products" value={search} onChange={e => setSearch(e.target.value)} placeholder="Search products..." />
+            </div>
+            <select aria-label="Product category" value={cat} onChange={e => setCat(e.target.value)}>
+              <option value="All">All Categories</option>
+              {categories.map(category => <option key={category} value={category}>{category}</option>)}
+            </select>
+          </div>
+        </header>
+        <div className="bm-catalog__results" role="status" aria-live="polite">
+          {loadingProducts ? 'Loading products...' : `${filtered.length} ${filtered.length === 1 ? 'product' : 'products'}${cat !== 'All' ? ' in ' + cat : ' to make your own'}`}
+        </div>
+        <div className="bm-catalog__grid" aria-busy={loadingProducts}>
+          {filtered.map(p => (
+            <article key={p.id} className="bm-catalog__card">
+              {p.popular && <span className="bm-catalog__popular">POPULAR</span>}
+              <div className="bm-catalog__image">
+                {p.image && <img src={p.image} alt={p.name} loading="lazy" decoding="async" />}
+              </div>
+              <div className="bm-catalog__content">
+                <p className="bm-catalog__category">{p.category}</p>
+                <h2>{p.name}</h2>
+                <p className="bm-catalog__description">{p.description}</p>
+                <div className="bm-catalog__purchase">
+                  <p className="bm-catalog__price">&#8369;{p.price.toLocaleString()}</p>
+                  <p className="bm-catalog__unit">{p.unit || "per piece"} &middot; min. {p.minQty} pcs</p>
+                  {p.stock !== undefined && p.stock <= (p.lowStockThreshold || 10) && (
+                    <p className={`bm-catalog__stock${p.stock === 0 ? ' bm-catalog__stock--empty' : ''}`}>
+                      {p.stock === 0 ? "Out of Stock" : `Low Stock: ${p.stock} left`}
+                    </p>
+                  )}
+                  <Btn size="sm" style={{ minHeight: 44, padding: "10px 20px" }} onClick={() => {
+                    setSelectedProduct(p);
+                    setPage("order");
+                  }}>Order <span aria-hidden="true">&rarr;</span></Btn>
+                </div>
+              </div>
+            </article>
           ))}
         </div>
+        {!loadingProducts && filtered.length === 0 && (
+          <div className="bm-catalog__empty">
+            <h2>No products found.</h2>
+            <p>Try a different search or category.</p>
+            <button onClick={() => { setSearch(""); setCat("All"); }}>Clear filters</button>
+          </div>
+        )}
       </div>
-
-      {loadingProducts && (
-        <div style={{ textAlign: "center", padding: "60px 0", color: C.gray400 }}>
-          Loading products...
-        </div>
-      )}
-
-      <div className="products-grid">
-        {filtered.map(p => (
-          <Card
-            key={p.id}
-            className="products-card"
-            style={{ position: "relative" }}
-          >
-            {p.popular && (
-              <div
-                style={{
-                  position: "absolute",
-                  top: 12,
-                  right: 12,
-                  background: C.red,
-                  color: "#fff",
-                  fontSize: 11,
-                  fontWeight: 700,
-                  padding: "3px 10px",
-                  borderRadius: 12
-                }}
-              >
-                POPULAR
-              </div>
-            )}
-            <div className="products-card__image">
-              {p.image && (
-                <img
-                  src={p.image}
-                  alt={`${p.name} product photo`}
-                  style={{ objectFit: p.imageFit || "cover" }}
-                />
-              )}
-            </div>
-            <div className="products-card__content">
-              <div className="products-card__category">{p.category}</div>
-              <h3 className="products-card__title">{p.name}</h3>
-              <p className="products-card__description">{p.description}</p>
-              <div className="products-card__footer">
-              <div>
-                <div
-                  style={{
-                    fontFamily: "Montserrat",
-                    fontWeight: 800,
-                    fontSize: 22,
-                    color: C.red
-                  }}
-                >
-                  ₱{p.price.toLocaleString()}
-                </div>
-                <div style={{ fontSize: 11, color: C.gray400 }}>
-                  {p.unit || "per piece"} · min. {p.minQty} pcs
-                </div>
-                {p.stock !== undefined && p.stock <= (p.lowStockThreshold || 10) && (
-                  <div style={{ fontSize: 11, color: p.stock === 0 ? "#c62828" : C.warning, fontWeight: 600, marginTop: 2 }}>
-                    {p.stock === 0 ? "Out of Stock" : `Low Stock: ${p.stock} left`}
-                  </div>
-                )}
-              </div>
-              <Btn
-                size="sm"
-                onClick={() => {
-                  setSelectedProduct(p);
-                  setPage("order");
-                }}
-              >
-                Order →
-              </Btn>
-              </div>
-            </div>
-          </Card>
-        ))}
-      </div>
-
-      {!loadingProducts && filtered.length === 0 && (
-        <div style={{ textAlign: "center", padding: "60px 0", color: C.gray400 }}>
-          No products found.
-        </div>
-      )}
-    </div>
+    </main>
   );
 };

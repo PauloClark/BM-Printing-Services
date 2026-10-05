@@ -1,6 +1,9 @@
-import { useState } from "react";
+import { OrderDesignFiles } from '../Common/OrderDesignFiles';
+import { ProductionProgress } from '../Common/ProductionProgress';
+import { orderApi, guestOrderToken } from '../../utils/orderApi';
+import { displayOrderStatus } from '../../../shared/orderWorkflow';
+import { useState, useEffect } from "react";
 import { C } from "../../constants/colors";
-import { STATUS_LIST } from "../../constants/products";
 import { Card } from "../Common/Card";
 import { Btn } from "../Common/Btn";
 import { Badge } from "../Common/Badge";
@@ -8,20 +11,46 @@ import { Badge } from "../Common/Badge";
 export const TrackPage = ({ orders, user }) => {
   const [trackId, setTrackId] = useState("");
   const [found, setFound] = useState(null);
+  const [trackingCode, setTrackingCode] = useState('');
+  const [error, setError] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [lookup, setLookup] = useState(null);
   const [searched, setSearched] = useState(false);
   const userOrders = user
-    ? orders.filter(o => o.userId === user.id || o.email === user.email)
+    ? orders.filter(o => o.userId === user.id || (user.email && o.email === user.email))
     : [];
-  const statusFlow = ["Pending", "Confirmed", "In Production", "Ready for Pickup", "Completed"];
+  const statusFlow = ["Pending", "Confirmed", "Processing", "Ready for Pickup", "Picked Up"];
 
   const doSearch = () => {
-    const q = trackId.trim().toLowerCase();
-    const o = orders.find(
-      o => o.id.toLowerCase() === q || o.email.toLowerCase() === q
-    );
-    setFound(o || null);
-    setSearched(true);
+    const id = trackId.trim().toUpperCase();
+    if (!id) { setError('Enter your order ID.'); return; }
+    setFound(null); setSearched(false); setLoading(true);
+    let token = trackingCode.trim();
+    try { token ||= guestOrderToken(id); } catch {}
+    setLookup({ id, token });
   };
+  useEffect(() => {
+    setFound(null);
+    if (!lookup) return;
+    let active = true, pending = false;
+    const load = async () => {
+      if (pending) return;
+      pending = true;
+      try {
+        if (!user && !lookup.token) throw new Error('Enter the private tracking code from your receipt, or login to view your orders.');
+        const url = lookup.token ? '/api/guest/orders/' : '/api/customers/orders/';
+        const data = await orderApi(url + encodeURIComponent(lookup.id), {
+          headers: lookup.token ? { 'X-Order-Token': lookup.token } : {}
+        }, user);
+        if (active) { setFound(data.order); setError(''); setSearched(true); }
+      } catch (e) { if (active) { setFound(null); setError(e.message); } }
+      finally { pending = false; if (active) setLoading(false); }
+    };
+    load();
+    const timer = setInterval(load, 5000);
+    window.addEventListener('focus', load);
+    return () => { active = false; clearInterval(timer); window.removeEventListener('focus', load); };
+  }, [lookup, user]);
 
   return (
     <div
@@ -43,28 +72,33 @@ export const TrackPage = ({ orders, user }) => {
         Track Your Order
       </h1>
       <p style={{ color: C.gray600, marginBottom: 28 }}>
-        Enter your Order ID or email address to check status.
+        Enter your Order ID to check the saved processing status. Updates refresh every 5 seconds.
       </p>
 
       <Card style={{ marginBottom: 32 }}>
-        <div style={{ display: "flex", gap: 12 }}>
+        <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
           <input
             value={trackId}
             onChange={e => setTrackId(e.target.value)}
             onKeyDown={e => e.key === "Enter" && doSearch()}
-            placeholder="Order ID (e.g. ORD-XXXXXXXX) or email"
+            placeholder="Order ID (e.g. ORD-XXXXXXXX)"
             style={{
               flex: 1,
+              minWidth: 0,
               padding: "12px 16px",
               border: `1.5px solid ${C.gray200}`,
               borderRadius: 8,
               fontSize: 14
             }}
           />
-          <Btn onClick={doSearch}>Search</Btn>
+          <Btn onClick={doSearch} loading={loading}>Search</Btn>
         </div>
       </Card>
 
+      {!user && <label style={{ display: 'block', marginBottom: 24 }}>Private tracking code (guest receipt)
+        <input value={trackingCode} onChange={e => setTrackingCode(e.target.value)} style={{ display: 'block', width: '100%', padding: 12 }} autoComplete="off" />
+      </label>}
+      {error && <p role="alert" style={{ color: C.red }}>{error}</p>}
       {searched && !found && (
         <Card
           style={{
@@ -73,7 +107,7 @@ export const TrackPage = ({ orders, user }) => {
             padding: "40px"
           }}
         >
-          Order not found. Check the ID or email and try again.
+          Order not found. Check the ID and try again.
         </Card>
       )}
 
@@ -103,6 +137,7 @@ export const TrackPage = ({ orders, user }) => {
             </div>
             <Badge status={found.status} />
           </div>
+          <ProductionProgress production={found.production} orderStatus={found.status} pickedUpAt={found.pickedUpAt} />
           <div
             style={{
               display: "flex",
@@ -111,7 +146,7 @@ export const TrackPage = ({ orders, user }) => {
             }}
           >
             {statusFlow.map((s, i) => {
-              const idx = statusFlow.indexOf(found.status);
+              const idx = statusFlow.indexOf(displayOrderStatus(found.status));
               const active = i <= idx && found.status !== "Cancelled";
               return (
                 <div key={s} style={{ flex: 1, textAlign: "center" }}>
@@ -183,30 +218,7 @@ export const TrackPage = ({ orders, user }) => {
               📝 {found.designNotes.slice(0, 100)}{found.designNotes.length > 100 && "..."}
             </div>
           )}
-          {found.designFileName && (
-            <div style={{ marginTop: 8 }}>
-              <div style={{ fontSize: 12, color: C.gray600 }}>
-                📎 {found.designFileName}
-              </div>
-              {found.designFileType && found.designFileType.startsWith('image') && (
-                <img
-                  src={found.designFileName ? `/uploads/orders/${found.designFileName}` : ''}
-                  alt="Design preview"
-                  style={{ width: 80, height: 60, objectFit: 'contain', borderRadius: 4, marginTop: 4 }}
-                />
-              )}
-              {found.designFileName && !(found.designFileType && found.designFileType.startsWith('image')) && (
-                <a
-                  href={`/uploads/orders/${found.designFileName}`}
-                  target="_blank"
-                  rel="noopener"
-                  style={{ color: C.red, fontSize: 12, textDecoration: 'underline' }}
-                >
-                  View/Download
-                </a>
-              )}
-            </div>
-          )}
+          <OrderDesignFiles key={found.id} order={found} user={user} />
         </Card>
       )}
 
@@ -227,8 +239,8 @@ export const TrackPage = ({ orders, user }) => {
               key={o.id}
               style={{ marginBottom: 12, cursor: "pointer" }}
               onClick={() => {
-                setFound(o);
-                setSearched(true);
+                setTrackId(o.id);
+                setLookup({ id: o.id, token: "" });
               }}
             >
               <div

@@ -1,3 +1,5 @@
+import { OrderDesignFiles } from '../Common/OrderDesignFiles';
+import { ProductionProgress } from '../Common/ProductionProgress';
 import { useState, useEffect } from "react";
 import { C } from "../../constants/colors";
 import { store } from "../../utils/storage";
@@ -6,6 +8,7 @@ import { Btn } from "../Common/Btn";
 import { Badge } from "../Common/Badge";
 import { Input } from "../Common/Input";
 import { Modal } from "../Common/Modal";
+import { PaymentSubmissionModal } from "./PaymentSubmissionModal";
 
 export const MyOrdersPage = ({ orders, user, setPage, showToast }) => {
   const [reviewModal, setReviewModal] = useState(null);
@@ -14,12 +17,14 @@ export const MyOrdersPage = ({ orders, user, setPage, showToast }) => {
   const [myOrders, setMyOrders] = useState([]);
   const [loadingOrders, setLoadingOrders] = useState(true);
   const [ordersError, setOrdersError] = useState("");
+  const [paymentOrder, setPaymentOrder] = useState(null);
 
   useEffect(() => {
-    let active = true;
+    let active = true, pending = false;
+    setMyOrders([]); setLoadingOrders(true);
     const fetchMyOrders = async () => {
-      setLoadingOrders(true);
-      setOrdersError("");
+      if (pending) return;
+      pending = true;
       try {
         let token = user?.token || "";
         if (user?.authProvider === "supabase") {
@@ -38,18 +43,21 @@ export const MyOrdersPage = ({ orders, user, setPage, showToast }) => {
         });
         const data = await response.json().catch(() => ({}));
         if (!response.ok) throw new Error(data.error || "Unable to load your orders.");
-        if (active) setMyOrders(Array.isArray(data.orders) ? data.orders : []);
+        if (active) { setMyOrders(Array.isArray(data.orders) ? data.orders : []); setOrdersError(""); }
       } catch (error) {
         if (active) {
           setMyOrders([]);
           setOrdersError(error.message || "Unable to load your orders.");
         }
       } finally {
+        pending = false;
         if (active) setLoadingOrders(false);
       }
     };
     fetchMyOrders();
-    return () => { active = false; };
+    const timer = setInterval(fetchMyOrders, 5000);
+    window.addEventListener('focus', fetchMyOrders);
+    return () => { active = false; clearInterval(timer); window.removeEventListener('focus', fetchMyOrders); };
   }, [user]);
 
   const submitReview = async () => {
@@ -74,6 +82,11 @@ export const MyOrdersPage = ({ orders, user, setPage, showToast }) => {
     setSubmittingReview(false);
   };
 
+  const handlePaymentSubmitted = updatedOrder => {
+    setMyOrders(current => current.map(order => order.id === updatedOrder.id ? { ...order, ...updatedOrder } : order));
+    setPaymentOrder(null);
+  };
+
   return (
     <div
       style={{
@@ -93,6 +106,9 @@ export const MyOrdersPage = ({ orders, user, setPage, showToast }) => {
       >
         My Orders
       </h1>
+      {new URLSearchParams(window.location.search).has('payment_return') && (
+        <p role="status" className="bm-order-payment-notice">You have returned from checkout. This does not confirm payment. Online payments remain pending verification; contact BM Printing for assistance.</p>
+      )}
 
       {loadingOrders ? (
         <Card style={{ textAlign: "center", padding: 40, color: C.gray400 }}>
@@ -152,6 +168,20 @@ export const MyOrdersPage = ({ orders, user, setPage, showToast }) => {
                   <div style={{ fontSize: 14, color: C.gray600 }}>
                     {o.product} · {o.quantity} pcs · {o.date}
                   </div>
+                  <ProductionProgress production={o.production} orderStatus={o.status} pickedUpAt={o.pickedUpAt} />
+                  <div style={{ marginTop: 8, fontSize: 13, color: C.gray600 }}>
+                    Payment Status: <strong>{o.paymentStatus || "Unpaid"}</strong>
+                  </div>
+                  {o.status === "Picked Up" && o.pickedUpAt && (
+                    <div style={{ marginTop: 4, fontSize: 13, color: "#1a7a3a", fontWeight: 600 }}>
+                      Picked Up on {new Date(o.pickedUpAt).toLocaleDateString("en-PH", { year: "numeric", month: "long", day: "numeric" })}
+                    </div>
+                  )}
+                  {o.paymentRejectionReason && (o.paymentStatus || "Unpaid") === "Rejected" && (
+                    <p style={{ margin: "5px 0 0", color: "#9b2525", fontSize: 12 }}>
+                      Reason: {o.paymentRejectionReason}
+                    </p>
+                  )}
                   {o.specs && (
                     <div
                       style={{
@@ -176,28 +206,7 @@ export const MyOrdersPage = ({ orders, user, setPage, showToast }) => {
                       📝 {o.designNotes.slice(0, 100)}{o.designNotes.length > 100 && "..."}
                     </div>
                   )}
-                  {o.designFileName && (
-                    <div style={{ marginTop: 6 }}>
-                      <div style={{ fontSize: 12, color: C.gray600 }}>
-                        📎 {o.designFileName}
-                      </div>
-                      {o.designFileType && o.designFileType.startsWith('image') && (
-                        <img
-                          src={o.designFileName ? `/uploads/orders/${o.designFileName}` : ''}
-                          alt="Design preview"
-                          style={{ width: 80, height: 60, objectFit: 'contain', borderRadius: 4, marginTop: 4 }}
-                        />
-                      )}
-                      {o.designFileName && !(o.designFileType && o.designFileType.startsWith('image')) && (
-                        <a
-                          href={`/uploads/orders/${o.designFileName}`}
-                          style={{ color: C.red, fontSize: 12, textDecoration: 'underline' }}
-                        >
-                          View/Download
-                        </a>
-                      )}
-                    </div>
-                  )}
+          <OrderDesignFiles key={o.id} order={o} user={user} />
                 </div>
                 <div
                   style={{
@@ -225,11 +234,28 @@ export const MyOrdersPage = ({ orders, user, setPage, showToast }) => {
                       ⭐ Review
                     </Btn>
                   )}
+                  {(o.paymentStatus || "Unpaid") !== "Verified" &&
+                    (o.paymentStatus || "Unpaid") !== "For Verification" &&
+                    !["Cancelled", "Completed"].includes(o.status) && (
+                      <Btn size="sm" onClick={() => setPaymentOrder(o)}>
+                        Submit Payment
+                      </Btn>
+                    )}
                 </div>
               </div>
             </Card>
           ))}
         </div>
+      )}
+
+      {paymentOrder && (
+        <PaymentSubmissionModal
+          order={paymentOrder}
+          user={user}
+          onClose={() => setPaymentOrder(null)}
+          onSubmitted={handlePaymentSubmitted}
+          showToast={showToast}
+        />
       )}
 
       <Modal

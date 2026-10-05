@@ -1,3 +1,4 @@
+import { authCallbackUrl } from '../../utils/authReturn';
 import { useState } from 'react';
 
 export const GoogleAuthOption = ({ disabled = false, onLoadingChange, onError }) => {
@@ -13,7 +14,7 @@ export const GoogleAuthOption = ({ disabled = false, onLoadingChange, onError })
       const { error } = await supabase.auth.signInWithOAuth({
         provider: 'google',
         options: {
-          redirectTo: window.location.origin
+          redirectTo: authCallbackUrl()
         }
       });
 
@@ -28,34 +29,17 @@ export const GoogleAuthOption = ({ disabled = false, onLoadingChange, onError })
 
   return (
     <>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 12, margin: '0 0 16px', color: '#888', fontSize: 11 }}>
-        <span style={{ height: 1, flex: 1, background: '#d9d9d9' }} />
+      <div className="bm-auth-divider">
+        <span />
         <span>OR</span>
-        <span style={{ height: 1, flex: 1, background: '#d9d9d9' }} />
+        <span />
       </div>
 
       <button
         type="button"
         onClick={startGoogleSignIn}
         disabled={disabled || loading}
-        style={{
-          display: 'flex',
-          width: '100%',
-          minHeight: 44,
-          alignItems: 'center',
-          justifyContent: 'center',
-          gap: 10,
-          marginBottom: 18,
-          padding: '10px 16px',
-          border: '1px solid #cfcfcf',
-          borderRadius: 4,
-          background: '#fff',
-          color: '#333',
-          fontSize: 14,
-          fontWeight: 600,
-          cursor: disabled || loading ? 'not-allowed' : 'pointer',
-          opacity: disabled || loading ? 0.7 : 1
-        }}
+        className="bm-auth-google"
       >
         <svg width="18" height="18" viewBox="0 0 48 48" aria-hidden="true">
           <path fill="#4285F4" d="M43.6 24.5c0-1.4-.1-2.8-.4-4.1H24v7.8h11a9.4 9.4 0 0 1-4.1 6.2v5.1h6.6c3.9-3.6 6.1-8.8 6.1-15Z" />

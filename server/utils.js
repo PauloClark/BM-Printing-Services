@@ -1,3 +1,4 @@
+import { saveDesignFile } from './designFiles.js';
 import path from 'path';
 import fs from 'fs';
 import { fileURLToPath } from 'url';
@@ -19,6 +20,7 @@ export function serializeOrder(order) {
   return {
     id: order.orderId,
     orderId: order.orderId,
+    jobOrderId: order.jobOrderId || null,
     customer: order.customerName,
     customerName: order.customerName,
     email: order.customerEmail,
@@ -34,38 +36,49 @@ export function serializeOrder(order) {
     totalAmount: order.totalAmount,
     payment: order.paymentMethod,
     paymentMethod: order.paymentMethod,
+    paymentStatus: order.paymentStatus || 'Unpaid',
+    paymentRejectionReason: order.paymentRejectionReason || '',
+    latestPayment: order.paymentSubmissions?.length ? (() => {
+      const payment = order.paymentSubmissions[order.paymentSubmissions.length - 1];
+      return {
+        id: String(payment._id),
+        paymentMethod: payment.paymentMethod,
+        amount: payment.amount,
+        referenceNumber: payment.referenceNumber,
+        status: payment.status,
+        submittedAt: payment.submittedAt,
+        verifiedAt: payment.verifiedAt,
+        rejectionReason: payment.rejectionReason,
+        receiptOriginalName: payment.receiptOriginalName
+      };
+    })() : null,
     status: order.status,
     notes: order.notes,
     designNotes: order.designNotes,
-    designFilePath: order.designFilePath,
+    designOriginalName: order.designOriginalName,
     designFileName: order.designFileName,
+    designFileOriginalName: order.designFileOriginalName,
     designFileType: order.designFileType,
     designFileSize: order.designFileSize,
-    specs: order.notes || '',
+    specs: order.specs || order.designNotes || order.notes || '',
     userId: order.customerId,
     date,
     createdAt: order.createdAt,
     completedAt: order.completedAt,
+    pickedUpAt: order.pickedUpAt || null,
+    releasedBy: order.releasedBy || '',
+    releasedByName: order.releasedByName || '',
+    receivedByName: order.receivedByName || null,
+    archived: order.archived || false,
+    archivedAt: order.archivedAt || null,
+    archivedBy: order.archivedBy || '',
+    archivedByName: order.archivedByName || '',
     serviceName: firstItem.productName || firstItem.name || 'N/A'
   };
 }
 
 export function uploadDesignFile(fileData) {
-  if (!fileData || !fileData.base64) return null;
-  try {
-    const matches = fileData.base64.match(/^data:([A-Za-z-+\/]+);base64,(.+)$/);
-    if (!matches) return null;
-    const ext = fileData.filename?.split('.').pop() || 'bin';
-    const filename = `design-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${ext}`;
-    const uploadsDir = path.join(UPLOADS_DIR, 'orders');
-    if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir, { recursive: true });
-    const buffer = Buffer.from(matches[2], 'base64');
-    fs.writeFileSync(path.join(uploadsDir, filename), buffer);
-    return { filename, originalName: fileData.filename || filename, fileType: matches[1], fileSize: buffer.length, storagePath: `/uploads/orders/${filename}` };
-  } catch (err) {
-    console.error('File upload failed:', err);
-    return null;
-  }
+  return saveDesignFile(fileData, path.resolve(process.env.ORDER_UPLOAD_DIR || path.join(UPLOADS_DIR, 'orders')));
 }
 
 export function uploadProductImage(fileData) {

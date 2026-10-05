@@ -1,9 +1,11 @@
 /* Applied only to the existing app shell while an internal page is active.
    No body, global component, navbar or Home selectors are changed. */
 .bm-internal-page {
+  --bm-navbar-height: 74px;
   position: relative;
   isolation: isolate;
   display: flow-root;
+  padding-top: 0;
   background: linear-gradient(90deg, #f8e9ec 0%, #fffafb 13%, #fff 28%, #fff 72%, #fffafb 87%, #f8e9ec 100%);
 }
 
@@ -13,7 +15,7 @@
 .bm-internal-page::after {
   content: "";
   position: fixed;
-  top: 77px;
+  top: 0;
   bottom: 0;
   width: clamp(24px, 8vw, 150px);
   z-index: -1;
@@ -37,13 +39,32 @@
 
 @media (max-width: 767px) {
   .bm-internal-page {
+    --bm-navbar-height: 64px;
     background: linear-gradient(90deg, #fbedef, #fffcfc 12%, #fff 35%, #fff 65%, #fffcfc 88%, #fbedef);
   }
   .bm-internal-page::before,
   .bm-internal-page::after {
-    top: 67px;
+    top: 0;
     width: 16px;
     opacity: 0.5;
     background: linear-gradient(135deg, #8b1a1a26 0 12px, transparent 13px 22px, #8b1a1a18 23px 25px, transparent 26px);
   }
+}
+
+/* Backgrounds reach the viewport edge; content supplies header clearance. */
+.bm-background-under-header { padding-top: 0; }
+.bm-background-under-header .bm-catalog { padding-top: var(--bm-navbar-height); }
+
+/* Match the fixed navbar: 74px desktop / 64px mobile. Background-led pages
+   already reserve this height inside their content; Home has no offset. */
+.bm-customer-page:not(.bm-background-under-header) {
+  padding-top: var(--bm-navbar-height);
+}
+
+.bm-staff-dashboard {
+  box-sizing: border-box;
+  width: 100%;
+  max-width: 1400px;
+  margin: 0 auto;
+  padding: calc(var(--bm-navbar-height) + 24px) 20px 0;
 }

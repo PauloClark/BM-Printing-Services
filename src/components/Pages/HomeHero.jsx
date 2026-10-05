@@ -1,111 +1,59 @@
-import { useEffect, useRef, useState } from "react";
-import { BMLogo } from "../Common/BMLogo";
 import "./HomeHero.css";
 
-// Desktop uses straight rectangular source windows, independent of the red
-// dividers. Preserve the existing source masks for the mobile carousel only.
+const assets = '/image/hero/products/cutouts/';
+const showcase = [
+  ['tshirt', 'tshirt-cutout.png', 'Custom printed jersey'],
+  ['polo', 'polo-cutout.png', 'BM Printing polo shirts'],
+  ['hoodie', 'hoodie-cutout.png', 'Custom printed hoodie'],
+  ['banner', 'banner-cutout.png', 'Printed signage'],
+  ['sticker', 'sticker-cutout.png', 'Die-cut stickers'],
+  ['id', 'school-id-cutout.png', 'School IDs and lanyards'],
+  ['mug', 'mug-cutout.png', 'Personalized printed mugs']
+];
 const services = [
-  { id: "sticker", title: "STICKER", subtitle: "Decals & Labels", desktopCrop: "410 140 310 527", crop: "255 140 585 527", outline: "255,140 678,140 838,667 418,667" },
-  { id: "offset", title: "OFFSET", subtitle: "Printing", desktopCrop: "830 140 330 527", crop: "678 140 620 527", outline: "678,140 1133,140 1296,667 838,667" },
-  { id: "signage", title: "SIGNAGE", subtitle: "Maker", desktopCrop: "1250 140 330 527", crop: "1133 140 606 527", outline: "1133,140 1576,140 1737,667 1296,667" },
-  { id: "tshirt", title: "T-SHIRT", subtitle: "Printing", desktopCrop: "1718 140 330 527", crop: "1576 140 472 527", outline: "1576,140 2048,140 2048,667 1737,667" },
+  ['apparel', 'APPAREL', 'PRINTING', 'M8 4 3 7l3 5 3-2v11h12V10l3 2 3-5-5-3c-1 4-8 4-9 0Z'],
+  ['offset', 'OFFSET', 'PRINTING', 'M8 11V3h14v8M8 22H4V11h22v11h-4M8 18h14v9H8ZM22 14h1'],
+  ['signage', 'SIGNAGE', 'MAKER', 'M6 3h18v21H6ZM4 27h22M9 24v3M21 24v3M10 8h10M10 12h7'],
+  ['sticker', 'STICKER', 'PRINTING', 'M5 4h20v13L15 27H5ZM15 27V17h10']
 ];
 
-export const HomeHero = ({ setPage }) => {
-  const [activeSlide, setActiveSlide] = useState(0);
-  const activeRef = useRef(0);
-  const trackRef = useRef(null);
-  const showSlide = (index) => {
-    const next = (index + services.length) % services.length;
-    const track = trackRef.current;
-    if (!track) return;
-    track.scrollTo({
-      left: next * track.clientWidth,
-      behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "instant" : "smooth",
-    });
-  };
-
-  useEffect(() => {
-    const track = trackRef.current;
-    // Keep the selected slide aligned when DevTools or device rotation resizes
-    // the viewport; clear the scroll offset when returning to the desktop banner.
-    const observer = new ResizeObserver(() => {
-      track.scrollLeft = window.innerWidth < 768 ? activeRef.current * track.clientWidth : 0;
-    });
-    observer.observe(track);
-    return () => observer.disconnect();
-  }, []);
-
-  return (
-  <section className="bm-hero" aria-labelledby="bm-hero-title">
-    <h1 className="bm-hero-sr-only" id="bm-hero-title">
-      BM Printing Services — Stickers, Offset, Signage & T-Shirt Printing
-    </h1>
-    <div className="bm-hero-stage">
-      <div className="bm-hero-brand">
-        <BMLogo size="100%" />
-      </div>
-      <div
-        className="bm-hero-panels"
-        id="bm-service-panels"
-        ref={trackRef}
-        onScroll={(event) => {
-          if (window.innerWidth >= 768) return;
-          const track = event.currentTarget;
-          const index = Math.max(0, Math.min(services.length - 1, Math.round(track.scrollLeft / track.clientWidth)));
-          activeRef.current = index;
-          setActiveSlide(index);
-        }}
-      >
-        {services.map(({ id, title, subtitle, desktopCrop, crop, outline }) => (
-          <div className={`bm-hero-panel bm-hero-panel--${id}`} key={id}>
-            <div className="bm-hero-panel-content">
-              <svg className="bm-hero-photo bm-hero-photo--desktop" viewBox={desktopCrop} preserveAspectRatio="xMidYMid slice" aria-hidden="true" focusable="false">
-                <image href="/bm-facebook-cover.jpg" width="2048" height="780" preserveAspectRatio="xMinYMin meet" />
-              </svg>
-              <svg className="bm-hero-photo bm-hero-photo--mobile" viewBox={crop} preserveAspectRatio="xMidYMax meet" aria-hidden="true" focusable="false">
-                <defs>
-                  <clipPath id={`bm-photo-${id}`}>
-                    <polygon points={outline} />
-                  </clipPath>
-                </defs>
-                <image href="/bm-facebook-cover.jpg" width="2048" height="780" preserveAspectRatio="xMinYMin meet" clipPath={`url(#bm-photo-${id})`} />
-              </svg>
-              <div className="bm-hero-photo-shade" />
-              <h2 className="bm-hero-service">
-                <span>{title}</span>
-                <small>{subtitle}</small>
-              </h2>
-            </div>
+export const HomeHero = ({ setPage }) => (
+  <section className="bm-ad-hero" aria-labelledby="bm-ad-title">
+    <div className="bm-ad-hero__stage">
+      <div className="bm-ad-hero__geometry" aria-hidden="true" />
+      <div className="bm-ad-hero__inner">
+        <div className="bm-ad-hero__message">
+          <h1 id="bm-ad-title">
+            <span className="bm-ad-hero__your">YOUR</span>
+            <span className="bm-ad-hero__trusted">TRUSTED</span>
+            <span className="bm-ad-hero__partner">PRINTING PARTNER</span>
+          </h1>
+          <p className="bm-ad-hero__tagline">Quality Prints for Every Need.</p>
+        </div>
+        <div className="bm-ad-hero__showcase" role="group" aria-label="Real BM Printing products">
+          <div className="bm-ad-hero__platform" aria-hidden="true" />
+          <div className="bm-ad-hero__stand">
+            <strong>YOUR IDEAS<br /><span>OUR PRINTS</span></strong>
+            <ul>{['Tarpaulin', 'Stickers', 'Signage', 'ID Printing', 'Sublimation'].map(service => <li key={service}>{service}</li>)}</ul>
           </div>
-        ))}
-      </div>
-      <div className="bm-hero-dividers" aria-hidden="true"><i /><i /><i /></div>
-    </div>
-
-    <div className="bm-hero-carousel-controls" role="group" aria-label="Service slides">
-      <button type="button" onClick={() => showSlide(activeSlide - 1)} aria-label="Previous service" aria-controls="bm-service-panels">←</button>
-      <span aria-live="polite" aria-atomic="true">{services[activeSlide].title} <small>{activeSlide + 1} / {services.length}</small></span>
-      <button type="button" onClick={() => showSlide(activeSlide + 1)} aria-label="Next service" aria-controls="bm-service-panels">→</button>
-    </div>
-
-    <div className="bm-hero-contact">
-      <address className="bm-hero-address">
-        <strong>BM PRINTING SERVICES</strong>
-        <a href="mailto:bmprintingservices11@gmail.com">bmprintingservices11@gmail.com</a>
-        <span>Brgy. Leon Garcia, Agdao, Davao City</span>
-      </address>
-      <a className="bm-hero-phone" href="tel:+639083045001">
-        <span>Smart</span><strong>0908-304-5001</strong>
-      </a>
-      <a className="bm-hero-phone" href="tel:+639772490286">
-        <span>Globe</span><strong>0977-249-0286</strong>
-      </a>
-      <div className="bm-hero-extras">
-        <span>We also accept:</span><strong>Rush ID / Photocopy</strong>
+          {showcase.map(([type, file, alt]) => <img key={type} className={`bm-ad-hero__product bm-ad-hero__product--${type}`} src={assets + file} alt={alt} decoding="async" />)}
+        </div>
+        <nav className="bm-ad-hero__services" aria-label="Explore printing services">
+          {services.map(([id, title, subtitle, icon]) => (
+            <button type="button" key={id} onClick={() => setPage('products')}>
+              <span className="bm-ad-hero__icon"><svg viewBox="0 0 30 30" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round" aria-hidden="true"><path d={icon} /></svg></span>
+              <span>{title}<br />{subtitle}</span>
+            </button>
+          ))}
+        </nav>
       </div>
     </div>
-
+    <div className="bm-ad-hero__contact">
+      <a href="mailto:bmprintingservices11@gmail.com">bmprintingservices11@gmail.com</a>
+      <span>Brgy. Leon Garcia, Agdao, Davao City</span>
+      <a href="tel:+639083045001">SMART 0908-304-5001</a>
+      <a href="tel:+639772490286">GLOBE 0977-249-0286</a>
+      <span>Rush ID / Photocopy</span>
+    </div>
   </section>
-  );
-};
+);

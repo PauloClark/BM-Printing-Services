@@ -1,3 +1,5 @@
+import { supabaseAppUser } from '../../shared/roles.js';
+import { isOrderStaff } from '../../shared/orderWorkflow.js';
 import jwt from 'jsonwebtoken';
 import { User } from '../db.js';
 
@@ -22,30 +24,10 @@ export function verifyToken(token) {
   return jwt.verify(token, JWT_SECRET);
 }
 
-export const requireAuth = async (req, res, next) => {
-  try {
-    const authHeader = req.headers.authorization;
-    if (!authHeader || !authHeader.startsWith('Bearer ')) {
-      return res.status(401).json({ error: 'Authentication required. Please login.' });
-    }
-    const token = authHeader.substring(7);
-    const decoded = verifyToken(token);
-    const user = await User.findOne({ id: decoded.id }).select('-password');
-    if (!user) {
-      return res.status(401).json({ error: 'User not found.' });
-    }
-    req.user = user;
-    next();
-  } catch (error) {
-    if (error.name === 'TokenExpiredError') {
-      return res.status(401).json({ error: 'Token expired. Please login again.' });
-    }
-    return res.status(401).json({ error: 'Invalid authentication token.' });
-  }
-};
+export const requireAuth = (req, res, next) => requireOrderAuth(req, res, next);
 
 export const requireAdmin = async (req, res, next) => {
-  requireAuth(req, res, () => {
+  return requireOrderAuth(req, res, () => {
     if (req.user && req.user.role !== 'admin') {
       return res.status(403).json({ error: 'Admin access required.' });
     }
@@ -75,24 +57,27 @@ export const requireOrderAuth = async (req, res, next) => {
   const token = authorization.slice(7);
   let jwtUser = null;
   try {
+    if (process.env.ALLOW_LEGACY_AUTH === 'false') throw new Error('Legacy login disabled');
     const decoded = verifyToken(token);
     jwtUser = await User.findOne({ id: decoded.id }).select('-password');
   } catch {}
 
   if (jwtUser) {
+    if (jwtUser.role === 'staff') return res.status(403).json({ error: 'Staff accounts must sign in with Supabase. Ask an administrator to assign your Supabase account.' });
     req.user = jwtUser;
     req.authProvider = 'jwt';
     return next();
   }
 
-  const supabaseUrl = process.env.VITE_SUPABASE_URL;
-  const supabaseAnonKey = process.env.VITE_SUPABASE_ANON_KEY;
+  const supabaseUrl = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL;
+  const supabaseAnonKey = process.env.SUPABASE_ANON_KEY || process.env.VITE_SUPABASE_ANON_KEY;
   if (!supabaseUrl || !supabaseAnonKey) {
     return res.status(401).json({ error: 'Unable to verify customer session.' });
   }
 
   try {
     const response = await fetch(`${supabaseUrl.replace(/\/$/, '')}/auth/v1/user`, {
+      signal: AbortSignal.timeout(10000),
       headers: {
         apikey: supabaseAnonKey,
         Authorization: `Bearer ${token}`
@@ -103,20 +88,24 @@ export const requireOrderAuth = async (req, res, next) => {
     }
 
     const supabaseUser = await response.json();
-    if (!supabaseUser.id || !supabaseUser.email) {
+    // Phone-only Supabase identities legitimately have no email. Accept either
+    // verified contact so OTP customers get the same customer session.
+    if (!supabaseUser.id || (!supabaseUser.email && !supabaseUser.phone)) {
       return res.status(401).json({ error: 'Invalid authentication token.' });
     }
 
-    const metadata = supabaseUser.user_metadata || {};
-    req.user = {
-      id: supabaseUser.id,
-      email: supabaseUser.email.toLowerCase(),
-      name: metadata.full_name || metadata.name || supabaseUser.email.split('@')[0],
-      role: 'customer'
-    };
+    req.user = supabaseAppUser(supabaseUser);
     req.authProvider = 'supabase';
     return next();
   } catch {
     return res.status(401).json({ error: 'Unable to verify customer session.' });
   }
 };
+
+export const requireOrderStaff = (req, res, next) => requireOrderAuth(req, res, () => {
+  if (!isOrderStaff(req.user)) return res.status(403).json({ error: 'Staff or admin access required.' });
+  return next();
+});
+// Invalid supplied credentials must never silently become a guest order.
+export const optionalOrderAuth = (req, res, next) => req.headers.authorization
+  ? requireOrderAuth(req, res, next) : next();

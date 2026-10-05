@@ -3,14 +3,19 @@
   "version": "1.0.0",
   "type": "module",
   "scripts": {
-    "dev": "vite",
+    "dev": "node scripts/dev.mjs",
     "preview": "vite preview",
     "build": "vite build",
     "server": "node server.js",
     "test": "npx jest --config jest.config.cjs --forceExit --detectOpenHandles",
-    "test:watch": "npx jest --config jest.config.cjs --watch --forceExit"
+    "test:watch": "npx jest --config jest.config.cjs --watch --forceExit",
+    "staff:assign": "node scripts/assign-supabase-role.mjs",
+    "services:start": "node scripts/local-services.mjs",
+    "dev:frontend": "vite"
   },
   "dependencies": {
+    "@google/genai": "^2.25.0",
+    "@supabase/supabase-js": "^2.117.2",
     "bcryptjs": "^3.0.3",
     "cors": "^2.8.6",
     "dotenv": "^16.6.1",

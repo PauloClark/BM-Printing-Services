@@ -6,7 +6,7 @@ import { Order } from './db.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-const REPORTS_DIR = path.join(__dirname, '..', 'reports', 'orders');
+const REPORTS_DIR = path.resolve(process.env.ORDER_REPORTS_DIR || path.join(__dirname, '..', 'reports', 'orders'));
 
 function toManilaDate(date) {
   return new Intl.DateTimeFormat('en-CA', {
