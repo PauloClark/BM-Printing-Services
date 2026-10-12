@@ -5,11 +5,12 @@
   "outputDirectory": "dist",
   "framework": "vite",
   "functions": {
-    "api/[...path].js": {
+    "api/index.js": {
       "maxDuration": 30
     }
   },
   "routes": [
+    { "src": "/api/(.*)", "dest": "/api?__api_path=$1" },
     { "handle": "filesystem" },
     { "src": "/(.*)", "dest": "/index.html" }
   ]

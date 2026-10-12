@@ -28,6 +28,7 @@ import contactMessageRoutes from './server/routes/contactMessages.js';
 import employeeRoutes from './server/routes/employees.js';
 import notificationRoutes from './server/routes/notifications.js';
 import customerRoutes from './server/routes/customers.js';
+import { allowedFrontendOrigins } from './server/deploymentOrigins.js';
 
 
 
@@ -37,13 +38,12 @@ const app = express();
 // accepting an arbitrary multi-hop X-Forwarded-For value.
 if (process.env.VERCEL || process.env.NODE_ENV === 'production') app.set('trust proxy', 1);
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const FRONTEND_ORIGINS = (process.env.FRONTEND_ORIGINS || (process.env.NODE_ENV === 'production' ? '' : 'http://localhost:3000,http://127.0.0.1:3000'))
-  .split(',').map(origin => origin.trim()).filter(Boolean);
+const FRONTEND_ORIGINS = allowedFrontendOrigins();
 
 app.use(express.json({ limit: '50mb' }));
 app.use(cors({
   origin(origin, callback) {
-    if (!origin || FRONTEND_ORIGINS.includes(origin)) return callback(null, true);
+    if (!origin || FRONTEND_ORIGINS.has(origin.replace(/\/$/, ''))) return callback(null, true);
     return callback(Object.assign(new Error('Origin is not allowed by CORS.'), { status: 403 }));
   },
   credentials: true

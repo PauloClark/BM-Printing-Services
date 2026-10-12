@@ -1,3 +1,5 @@
+import { deploymentHostnames } from './deploymentOrigins.js';
+
 // Shared Cloudflare Turnstile Siteverify helper.
 //
 // The public Contact form must not duplicate verification logic, so this is
@@ -11,7 +13,9 @@ const configuredSecret = () => process.env.NODE_ENV !== 'production' && process.
   ? TURNSTILE_DEVELOPMENT_SECRET
   : process.env.TURNSTILE_SECRET_KEY;
 const configuredHostnames = () => String(process.env.TURNSTILE_HOSTNAMES || '')
-  .split(',').map(hostname => hostname.trim().toLowerCase()).filter(Boolean);
+  .split(',').map(hostname => hostname.trim().toLowerCase()).filter(Boolean)
+  .concat(deploymentHostnames())
+  .filter((hostname, index, all) => all.indexOf(hostname) === index);
 
 export async function verifyWithCloudflare(token, secret) {
   const response = await fetch(TURNSTILE_SITEVERIFY_URL, {
@@ -29,7 +33,6 @@ export async function verifyWithCloudflare(token, secret) {
 
   return response.json();
 }
-
 // Verifies a caller-supplied token against the server-side secret.
 // Returns { ok: true } or { ok: false, status, message } with safe copy only.
 export async function verifyTurnstileServerToken(
