@@ -1,13 +1,8 @@
 import { authCallbackUrl } from '../../utils/authReturn';
 import { useState } from 'react';
-import { TurnstileWidget } from './TurnstileWidget';
-import { turnstileStatusMessage, verifyTurnstileToken } from '../../utils/turnstile';
 
-export const GoogleAuthOption = ({ disabled = false, onLoadingChange, onError }) => {
+export const GoogleAuthOption = ({ disabled = false, onLoadingChange, onError, verifySecurity }) => {
   const [loading, setLoading] = useState(false);
-  const [turnstileToken, setTurnstileToken] = useState('');
-  const [turnstileStatus, setTurnstileStatus] = useState('loading');
-  const [turnstileResetSignal, setTurnstileResetSignal] = useState(0);
 
   const startGoogleSignIn = async () => {
     if (loading || disabled) return;
@@ -15,13 +10,7 @@ export const GoogleAuthOption = ({ disabled = false, onLoadingChange, onError })
     onLoadingChange?.(true);
 
     try {
-      if (!turnstileToken) throw new Error(turnstileStatusMessage(turnstileStatus));
-      try {
-        await verifyTurnstileToken(turnstileToken);
-      } finally {
-        setTurnstileToken('');
-        setTurnstileResetSignal(signal => signal + 1);
-      }
+      await verifySecurity();
       const { supabase } = await import('../../utils/supabaseClient');
       const { error } = await supabase.auth.signInWithOAuth({
         provider: 'google',
@@ -46,12 +35,6 @@ export const GoogleAuthOption = ({ disabled = false, onLoadingChange, onError })
         <span>OR</span>
         <span />
       </div>
-
-      <TurnstileWidget
-        resetSignal={turnstileResetSignal}
-        onTokenChange={setTurnstileToken}
-        onStatusChange={setTurnstileStatus}
-      />
 
       <button
         type="button"

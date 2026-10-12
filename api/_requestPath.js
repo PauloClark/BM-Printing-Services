@@ -10,3 +10,6 @@ export function restoreApiPath(req) {
   }
   req.url = `/api/${routedPath}${query.size ? `?${query}` : ''}`;
 }
+
+const DATABASE_INDEPENDENT_PATHS = new Set(['/api/health', '/api/turnstile/verify']);
+export const apiRequestNeedsMongo = url => !DATABASE_INDEPENDENT_PATHS.has(String(url || '').split('?', 1)[0]);

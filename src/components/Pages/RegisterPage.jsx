@@ -28,6 +28,16 @@ export const RegisterPage = ({ setPage, onLogin, showToast: notify }) => {
   const [turnstileStatus, setTurnstileStatus] = useState('loading');
   const [turnstileResetSignal, setTurnstileResetSignal] = useState(0);
 
+  const verifySecurity = async () => {
+    if (!turnstileToken) throw new Error(turnstileStatusMessage(turnstileStatus));
+    try {
+      await verifyTurnstileToken(turnstileToken);
+    } finally {
+      setTurnstileToken('');
+      setTurnstileResetSignal(signal => signal + 1);
+    }
+  };
+
   const onChange = (e) => {
     const { name, value } = e.target;
     setErrorMessage('');
@@ -48,28 +58,9 @@ export const RegisterPage = ({ setPage, onLogin, showToast: notify }) => {
       return;
     }
 
-    if (!turnstileToken) {
-      const message = turnstileStatusMessage(turnstileStatus);
-      setErrorMessage(message);
-      notify?.(message, 'error');
-      return;
-    }
-
     setLoading(true);
     try {
-      try {
-        await verifyTurnstileToken(turnstileToken);
-      } catch (verificationError) {
-        setTurnstileToken('');
-        setTurnstileResetSignal(signal => signal + 1);
-        const message = verificationError.message;
-        setErrorMessage(message);
-        notify?.(message, 'error');
-        return;
-      }
-
-      setTurnstileToken('');
-      setTurnstileResetSignal(signal => signal + 1);
+      await verifySecurity();
       const { supabase } = await import('../../utils/supabaseClient');
       const data = await registerCustomer(supabase, form, authCallbackUrl());
       await store.del('session');
@@ -210,6 +201,7 @@ export const RegisterPage = ({ setPage, onLogin, showToast: notify }) => {
 
         <GoogleAuthOption
           disabled={loading}
+          verifySecurity={verifySecurity}
           onLoadingChange={setGoogleLoading}
           onError={error => notify?.(error.message || 'Unable to connect with Google. Please try again.', 'error')}
         />

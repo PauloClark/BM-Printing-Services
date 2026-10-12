@@ -9,7 +9,7 @@ This document is a preparation checklist. It does not authorize deployment, data
 - Output directory: `dist`
 - Install command: `npm ci`
 - Node runtime: Node 24.x, matching the validated local build and `package.json`
-- API entry: `api/[...path].js`; existing `/api/*` paths are handled by Express
+- API entry: `api/index.js`; `vercel.json` rewrites existing `/api/*` paths to Express
 - Keep frontend and API in the same Vercel project unless `VITE_API_BASE_URL` is intentionally configured
 
 Run `npm run validate:deployment-env` in a staging environment before deployment. Never paste secret values into build logs.
@@ -19,6 +19,7 @@ Run `npm run validate:deployment-env` in a staging environment before deployment
 | Name | Scope | Purpose |
 | --- | --- | --- |
 | `MONGODB_URI` | Server | Atlas replica-set connection URI including the `bmprinting` database |
+| `MONGODB_DB_NAME` | Server | Must be `bmprinting`; explicitly selects the migrated database |
 | `MONGODB_MAX_POOL_SIZE` | Server | Function-instance pool cap; start with 10 and monitor Atlas connections |
 | `MONGODB_SERVER_SELECTION_TIMEOUT_MS` | Server | Fail-fast database selection timeout |
 | `FRONTEND_ORIGINS` | Server | Comma-separated exact staging/production browser origins |

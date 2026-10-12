@@ -1,14 +1,16 @@
 import { app } from '../server.js';
 import { connectMongo } from '../server/db.js';
-import { restoreApiPath } from './_requestPath.js';
+import { apiRequestNeedsMongo, restoreApiPath } from './_requestPath.js';
 
 let connection;
 
 export default async function handler(req, res) {
   try {
     restoreApiPath(req);
-    connection ||= connectMongo();
-    await connection;
+    if (apiRequestNeedsMongo(req.url)) {
+      connection ||= connectMongo();
+      await connection;
+    }
     return app(req, res);
   } catch (error) {
     connection = undefined;

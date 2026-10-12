@@ -21,29 +21,21 @@ export const LoginPage = ({ setPage, onLogin, showToast }) => {
   const [turnstileStatus, setTurnstileStatus] = useState('loading');
   const [turnstileResetSignal, setTurnstileResetSignal] = useState(0);
 
-  const login = async () => {
-    setErrorMessage('');
-    if (!turnstileToken) {
-      const message = turnstileStatusMessage(turnstileStatus);
-      setErrorMessage(message);
-      showToast?.(message, 'error');
-      return;
-    }
-
-    setLoading(true);
+  const verifySecurity = async () => {
+    if (!turnstileToken) throw new Error(turnstileStatusMessage(turnstileStatus));
     try {
-      try {
-        await verifyTurnstileToken(turnstileToken);
-      } catch (verificationError) {
-        setTurnstileToken('');
-        setTurnstileResetSignal(signal => signal + 1);
-        setErrorMessage(verificationError.message);
-        showToast?.(verificationError.message, 'error');
-        return;
-      }
-
+      await verifyTurnstileToken(turnstileToken);
+    } finally {
       setTurnstileToken('');
       setTurnstileResetSignal(signal => signal + 1);
+    }
+  };
+
+  const login = async () => {
+    setErrorMessage('');
+    setLoading(true);
+    try {
+      await verifySecurity();
       const { supabase } = await import('../../utils/supabaseClient');
       const user = await signInAccount(supabase, email, pass, async () => {
         const response = await fetch('/api/auth/login', {
@@ -201,6 +193,7 @@ export const LoginPage = ({ setPage, onLogin, showToast }) => {
 
         <GoogleAuthOption
           disabled={loading}
+          verifySecurity={verifySecurity}
           onLoadingChange={setGoogleLoading}
           onError={error => showToast?.(error.message || 'Unable to connect with Google. Please try again.', 'error')}
         />

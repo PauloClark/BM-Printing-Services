@@ -440,6 +440,7 @@ export async function connectMongo() {
   mongoConnectionPromise = (async () => {
     try {
       await mongoose.connect(uri, {
+        dbName: process.env.MONGODB_DB_NAME || undefined,
         maxPoolSize: Number(process.env.MONGODB_MAX_POOL_SIZE || 10),
         serverSelectionTimeoutMS: Number(process.env.MONGODB_SERVER_SELECTION_TIMEOUT_MS || 10000)
       });
