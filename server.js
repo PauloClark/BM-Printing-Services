@@ -12,6 +12,7 @@ import Joi from 'joi';
 import mongoose from 'mongoose';
 import { fileURLToPath } from 'url';
 import { connectMongo, seedCatalogAndAdmin, User, Product, Order, Inventory, Production, OrderFile, AuditLog, StockMovement, Employee } from './server/db.js';
+import { logMongoStartupFailure } from './server/mongoDiagnostics.js';
 import { generateDailyReport, getDefaultReportDate, getReportSummary, readReportFile, formatCurrency } from './server/reportService.js';
 import { generateToken, requireAuth, requireAdmin, optionalAuth, requireOrderStaff } from './server/middleware/auth.js';
 import { userRegister, userLogin, orderCreate, statusUpdate, orderIdParam, productCreate } from './server/middleware/validate.js';
@@ -176,12 +177,14 @@ app.use('/api/production', (req, res, next) => {
 });
 
 app.get('/api/health', async (req, res) => {
-  let dbStatus = 'disconnected';
   try {
-    const state = mongoose.connection.readyState;
-    dbStatus = state === 1 ? 'connected' : state === 2 ? 'connecting' : 'disconnected';
-  } catch {}
-  res.json({ status: dbStatus === 'connected' ? 'ok' : 'degraded', db: dbStatus, timestamp: new Date() });
+    await connectMongo();
+    await mongoose.connection.db.admin().ping();
+    res.json({ status: 'ok', db: 'connected', timestamp: new Date() });
+  } catch (error) {
+    logMongoStartupFailure(error);
+    res.status(503).json({ status: 'degraded', db: 'unavailable', timestamp: new Date() });
+  }
 });
 
 // ─── INVENTORY MANAGEMENT ───────────────────────────────────────────────
@@ -620,7 +623,7 @@ async function startServer() {
       console.log(`BM Printing Services backend running on port ${process.env.PORT || 4000}`);
     });
   } catch (error) {
-    console.error('Failed to start server:', error);
+    logMongoStartupFailure(error);
     process.exit(1);
   }
 }

@@ -2,6 +2,7 @@ import { Product } from '../db.js';
 import { requireAdmin } from '../middleware/auth.js';
 import { productCreate } from '../middleware/validate.js';
 import { safeText } from '../utils.js';
+import { logMongoOperationFailure } from '../mongoDiagnostics.js';
 
 const TEXT_FIELDS = ['name', 'description', 'category', 'image', 'unit', 'imageFit', 'specificationType'];
 const NUMBER_FIELDS = ['price', 'minQty', 'stock', 'lowStockThreshold'];
@@ -40,7 +41,10 @@ export default function productRoutes(app) {
       ]);
       res.set('Cache-Control', 'no-store');
       res.json({ products: products.map(serializeProduct), catalogConfigured: catalogCount > 0 });
-    } catch { res.status(503).json({ error: 'Unable to load products.' }); }
+    } catch (error) {
+      logMongoOperationFailure('products.list-public', error);
+      res.status(503).json({ error: 'Unable to load products.' });
+    }
   });
 
   app.get('/api/admin/products', requireAdmin, async (_req, res) => {
@@ -48,7 +52,10 @@ export default function productRoutes(app) {
       const products = await Product.find({}).sort({ id: 1 }).lean();
       res.set('Cache-Control', 'no-store');
       res.json({ products: products.map(serializeProduct), catalogConfigured: products.length > 0 });
-    } catch { res.status(503).json({ error: 'Unable to load product management.' }); }
+    } catch (error) {
+      logMongoOperationFailure('products.list-admin', error);
+      res.status(503).json({ error: 'Unable to load product management.' });
+    }
   });
 
   app.post('/api/products', requireAdmin, productCreate, async (req, res) => {

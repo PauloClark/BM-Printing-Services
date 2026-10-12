@@ -4,6 +4,7 @@ import { generateToken, requireOrderAuth } from '../middleware/auth.js';
 import { userRegister, userLogin } from '../middleware/validate.js';
 import { safeText } from '../utils.js';
 import staffPasswordRoutes from './staffPassword.js';
+import { logMongoOperationFailure } from '../mongoDiagnostics.js';
 
 export default function authRoutes(app, authLimiter) {
   app.get('/api/auth/me', requireOrderAuth, (req, res) => {
@@ -111,7 +112,7 @@ export default function authRoutes(app, authLimiter) {
       const token = generateToken(user);
       res.json({ user: { id: user.id, name: user.name, email: user.email, phone: user.phone, role: user.role }, token });
     } catch (error) {
-      console.error('Login failed:', error);
+      logMongoOperationFailure('auth.legacy-login', error);
       res.status(500).json({ error: 'Unable to log in.' });
     }
   });
