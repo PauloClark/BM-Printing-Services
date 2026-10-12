@@ -1,6 +1,7 @@
 import express from 'express';
 import request from 'supertest';
 import turnstileRoutes from '../server/routes/turnstile.js';
+import { verifyTurnstileServerToken } from '../server/turnstileVerify.js';
 import { TURNSTILE_ERRORS, verifyTurnstileToken } from '../src/utils/turnstile.js';
 
 let app;
@@ -41,6 +42,17 @@ test('only returns success when Siteverify confirms the token', async () => {
     .expect(200, { success: true });
 
   expect(verifyToken).toHaveBeenCalledWith('temporary-token', 'server-only-test-secret');
+});
+
+test('accepts only an explicitly configured production hostname', async () => {
+  const verifyToken = jest.fn().mockResolvedValue({ success: true, hostname: 'bm-printing.vercel.app' });
+  await expect(verifyTurnstileServerToken('temporary-token', {
+    verifyToken, secret: 'server-only-test-secret', expectedHostnames: ['bm-printing.vercel.app']
+  })).resolves.toEqual({ ok: true });
+  await expect(verifyTurnstileServerToken('temporary-token', {
+    verifyToken: jest.fn().mockResolvedValue({ success: true, hostname: 'untrusted.example' }),
+    secret: 'server-only-test-secret', expectedHostnames: ['bm-printing.vercel.app']
+  })).resolves.toMatchObject({ ok: false, status: 400 });
 });
 
 test('rejects invalid Cloudflare tokens without returning provider details', async () => {

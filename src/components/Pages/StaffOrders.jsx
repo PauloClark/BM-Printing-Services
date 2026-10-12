@@ -3,17 +3,18 @@ import { OrderDesignFiles } from '../Common/OrderDesignFiles';
 import { StaffMessages } from './StaffMessages';
 import { useEffect, useState } from 'react';
 import { orderApi } from '../../utils/orderApi';
-import { ORDER_STATUSES, displayOrderStatus, nextOrderStatus, ORDER_ACTIONS } from '../../../shared/orderWorkflow';
+import { ORDER_STATUSES, displayOrderStatus } from '../../../shared/orderWorkflow';
 import { Card } from '../Common/Card';
 import { Btn } from '../Common/Btn';
 import { Badge } from '../Common/Badge';
 import { Modal } from '../Common/Modal';
+import { PickupConfirmationModal } from '../Common/PickupConfirmationModal';
 import './StaffOrders.css';
 
 const money = amount => new Intl.NumberFormat('en-PH', { style: 'currency', currency: 'PHP' }).format(amount || 0);
 const date = value => value ? new Date(value).toLocaleString('en-PH') : 'Not recorded';
 
-export function StaffOrders({ user, showToast }) {
+export function StaffOrders({ user, showToast, onReviewPayment }) {
   const [orders, setOrders] = useState([]);
   const [selectedId, setSelectedId] = useState(null);
   const [filter, setFilter] = useState('All');
@@ -102,18 +103,22 @@ export function StaffOrders({ user, showToast }) {
 
   const confirmPickup = async () => {
     if (!pickupOrder || confirmingPickup) return;
+    if (receivedByName.trim().length < 2) {
+      setPickupError('Enter the full name of the person collecting the order.');
+      return;
+    }
     setConfirmingPickup(true);
     setPickupError('');
     try {
       const data = await orderApi(`/api/orders/${encodeURIComponent(pickupOrder.id)}/confirm-pickup`, {
         method: 'POST',
-        body: JSON.stringify({ receivedByName: receivedByName || undefined })
+        body: JSON.stringify({ receivedByName: receivedByName.trim() })
       }, user);
       setOrders(list => list.map(o => o.id === data.order.id ? data.order : o));
       setRefresh(n => n + 1);
       setPickupOrder(null);
       setPickupDetails(null);
-      showToast?.(`Order ${data.order.id} confirmed as Picked Up. Inventory deducted.`, 'success');
+      showToast?.(`Order ${data.order.id} confirmed as Picked Up.`, 'success');
     } catch (e) {
       setPickupError(e.message);
       setRefresh(n => n + 1);
@@ -128,8 +133,12 @@ export function StaffOrders({ user, showToast }) {
 
   const readyForPickupCount = orders.filter(o => displayOrderStatus(o.status) === 'Ready for Pickup').length;
 
+  if (user.role === 'staff') return <section className="bm-staff-orders">
+    <JobOrders user={user} refresh={refresh} />
+    <StaffMessages user={user} showToast={showToast} />
+  </section>;
+
   return <section className="bm-staff-orders">
-    {user.role === 'staff' && <JobOrders user={user} refresh={refresh} />}
     <div className="bm-order-summary">
       {[['New Orders', 'Pending'], ['Confirmed', 'Confirmed'], ['Processing', 'Processing'], ['Ready for Pickup', 'Ready for Pickup'], ['Completed', 'Completed']].map(([label, status]) =>
         <Card key={status}><strong>{orders.filter(o => displayOrderStatus(o.status) === status).length}</strong><span>{label}</span></Card>)}
@@ -158,27 +167,53 @@ export function StaffOrders({ user, showToast }) {
     </tbody></table></div></Card>
 
     {/* Order Detail Modal */}
-    <Modal open={Boolean(selected)} onClose={() => !busy && setSelectedId(null)} title={`Order ${selected?.id}`} width={760}>
-      {selected && <>
-        <h4>Customer information</h4><dl className="bm-order-details">{[['Name', selected.customer], ['Email', selected.email], ['Phone', selected.phone], ['Fulfillment / Address', selected.address]].map(([k,v]) => <div key={k}><dt>{k}</dt><dd>{v || 'Not provided'}</dd></div>)}</dl>
-        <h4>Order information</h4>
-        {(selected.items || []).map((item, i) => <p key={i}><strong>{item.productName}</strong> · {item.quantity} pcs · {money(item.subtotal)}</p>)}
-        <dl className="bm-order-details">{[['Product specifications', selected.specs], ...(selected.designNotes && selected.designNotes !== selected.specs ? [['Design instructions', selected.designNotes]] : []), ['Customer notes', selected.notes], ['Total price', money(selected.total)], ['Date ordered', date(selected.createdAt)]].map(([k,v]) => <div key={k}><dt>{k}</dt><dd>{v || 'None provided'}</dd></div>)}</dl>
-        <OrderDesignFiles order={selected} user={user} />
-        <h4>Payment</h4><p>{selected.payment || 'Not recorded'}</p><p>Payment status: {selected.paymentStatus || 'Not recorded — confirm payment separately.'}</p>
-        {user.role === 'admin' && <PrepareJobOrder key={selected.id} order={selected} user={user} onCreated={() => setRefresh(n => n + 1)} />}
-        <h4>Processing status</h4><Badge status={displayOrderStatus(selected.status)} />
+    <Modal open={Boolean(selected)} onClose={() => !busy && setSelectedId(null)} title={`Order Details · ${selected?.id || ''}`} width={860}>
+      {selected && <div className="bm-admin-order-modal">
+        <section className="bm-admin-order-section">
+          <div className="bm-admin-order-section__heading"><div><span>Order summary</span><h4>{selected.product}</h4></div><Badge status={displayOrderStatus(selected.status)} /></div>
+          <dl className="bm-admin-order-grid">{[
+            ['Order number', selected.id], ['Customer', selected.customer], ['Quantity', `${selected.quantity} pcs`],
+            ['Total price', money(selected.total)], ['Order date', date(selected.createdAt)], ['Contact', selected.phone || selected.email]
+          ].map(([key, value]) => <div key={key}><dt>{key}</dt><dd>{value || 'Not provided'}</dd></div>)}</dl>
+          <div className="bm-admin-order-copy"><strong>Product specifications</strong><p>{selected.specs || selected.designNotes || 'No specifications recorded.'}</p></div>
+          {selected.designNotes && selected.designNotes !== selected.specs && <div className="bm-admin-order-copy"><strong>Design instructions</strong><p>{selected.designNotes}</p></div>}
+          {selected.notes && selected.notes !== selected.specs && selected.notes !== selected.designNotes && <div className="bm-admin-order-copy"><strong>Customer notes</strong><p>{selected.notes}</p></div>}
+        </section>
+
+        <section className="bm-admin-order-section"><OrderDesignFiles order={selected} user={user} /></section>
+
+        <section className="bm-admin-order-section">
+          <div className="bm-admin-order-section__heading"><div><span>Payment</span><h4>Payment information</h4></div><span className={`bm-admin-order-payment is-${String(selected.paymentStatus || 'unpaid').toLowerCase().replace(/\s+/g, '-')}`}>{selected.paymentStatus || 'Unpaid'}</span></div>
+          <dl className="bm-admin-order-grid">
+            <div><dt>Payment method</dt><dd>{selected.latestPayment?.paymentMethod || selected.payment || 'Not recorded'}</dd></div>
+            <div><dt>Submitted amount</dt><dd>{selected.latestPayment ? money(selected.latestPayment.amount) : 'No payment submitted'}</dd></div>
+            <div><dt>Reference</dt><dd>{selected.latestPayment?.referenceNumber || 'Not available'}</dd></div>
+            <div><dt>Submitted</dt><dd>{selected.latestPayment ? date(selected.latestPayment.submittedAt) : 'Not available'}</dd></div>
+          </dl>
+          {selected.paymentStatus === 'For Verification' && <div className="bm-admin-order-callout"><p>Payment proof requires Admin review. Confirming the full payment will automatically confirm this order.</p><Btn onClick={onReviewPayment}>Review Payment</Btn></div>}
+          {['Unpaid', 'Rejected'].includes(selected.paymentStatus || 'Unpaid') && <p className="bm-admin-order-muted">Awaiting full payment from the customer. This order cannot be confirmed or assigned.</p>}
+        </section>
+
+        <section className="bm-admin-order-section">
+          <div className="bm-admin-order-section__heading"><div><span>Production</span><h4>Processing status</h4></div><Badge status={selected.production?.status || displayOrderStatus(selected.status)} /></div>
+          {selected.production ? <>
+            <dl className="bm-admin-order-grid"><div><dt>Job order</dt><dd>{selected.production.jobOrderId}</dd></div><div><dt>Assigned employee</dt><dd>{selected.production.assignedEmployeeName || 'Not assigned'}</dd></div><div><dt>Assigned</dt><dd>{date(selected.production.dateAssigned)}</dd></div><div><dt>Due date</dt><dd>{date(selected.production.dueDate)}</dd></div></dl>
+            {selected.production.productionHistory?.length > 0 && <ol className="bm-admin-order-history">{selected.production.productionHistory.map((event, index) => <li key={`${event.status}-${event.timestamp}-${index}`}><span /><div><strong>{event.status}</strong><time>{date(event.timestamp)}</time>{event.notes && <p>{event.notes}</p>}</div></li>)}</ol>}
+          </> : selected.status === 'Confirmed' && selected.paymentStatus === 'Verified' ? <p className="bm-admin-order-muted">Payment is verified. This order is ready for job assignment.</p> : <p className="bm-admin-order-muted">No production job has been assigned.</p>}
+          {user.role === 'admin' && selected.status === 'Confirmed' && selected.paymentStatus === 'Verified' && !selected.jobOrderId && <PrepareJobOrder key={selected.id} order={selected} user={user} onCreated={() => setRefresh(n => n + 1)} />}
+        </section>
+
         {selected.archived && <p>Archived {date(selected.archivedAt)} by {selected.archivedByName || selected.archivedBy}</p>}
         {(error || actionError) && <p role="alert" className="bm-order-error">{actionError || error}</p>}
-        <div className="bm-order-toolbar">
+        <div className="bm-admin-order-actions">
           {user.role === 'admin' && selected.status === 'Picked Up' && !selected.archived && <Btn disabled={archiving} loading={archiving} onClick={archiveSelected}>Archive Order</Btn>}
-          {!selected.jobOrderId && nextOrderStatus(selected.status) && <><Btn disabled={busy || Boolean(error)} loading={busy} onClick={() => update(nextOrderStatus(selected.status))}>{ORDER_ACTIONS[nextOrderStatus(selected.status)]}</Btn><Btn variant="ghost" disabled={busy || Boolean(error)} onClick={() => update('Cancelled')}>Cancel Order</Btn></>}
+          {!selected.jobOrderId && ['Pending', 'Confirmed'].includes(selected.status) && <Btn variant="ghost" disabled={busy || Boolean(error)} onClick={() => update('Cancelled')}>Cancel Order</Btn>}
         </div>
-      </>}
+      </div>}
     </Modal>
 
     {/* Pickup Details & Confirmation Modal */}
-    <Modal open={Boolean(pickupOrder)} onClose={() => !confirmingPickup && !pickupLoading && setPickupOrder(null)} title={`Confirm Pickup — ${pickupOrder?.id || ''}`} width={700}>
+    {false && <Modal open={Boolean(pickupOrder)} onClose={() => !confirmingPickup && !pickupLoading && setPickupOrder(null)} title={`Confirm Pickup — ${pickupOrder?.id || ''}`} width={700}>
       {pickupOrder && <>
         {pickupLoading && <p style={{ textAlign: 'center', padding: 20, color: '#666' }}>Loading pickup details...</p>}
         {pickupError && <p role="alert" className="bm-order-error">{pickupError}</p>}
@@ -261,7 +296,10 @@ export function StaffOrders({ user, showToast }) {
           </div>
         </>}
       </>}
-    </Modal>
+    </Modal>}
+    <PickupConfirmationModal open={Boolean(pickupOrder)} detail={pickupDetails} loading={pickupLoading} error={pickupError}
+      receiverName={receivedByName} onReceiverChange={value => { setReceivedByName(value); setPickupError(''); }} confirming={confirmingPickup}
+      onClose={() => { setPickupOrder(null); setPickupDetails(null); setPickupError(''); }} onConfirm={confirmPickup} />
 
     {/* Contact Us inquiries. Reuses the same authenticated staff session. */}
     <StaffMessages user={user} showToast={showToast} />

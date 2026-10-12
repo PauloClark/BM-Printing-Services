@@ -4,7 +4,7 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { setupTestDB, teardownTestDB, clearTestDB } from './setup.js';
-import { Order } from '../server/db.js';
+import { Notification, Order, User } from '../server/db.js';
 import orderFileRoutes from '../server/routes/orderFiles.js';
 import orderPaymentRoutes from '../server/routes/orderPayments.js';
 
@@ -36,7 +36,7 @@ const auth = token => ({ Authorization: `Bearer ${token}` });
 const receipt = (filename = 'receipt.png') => ({ filename, base64: 'data:image/png;base64,dGVzdA==' });
 const paymentPayload = overrides => ({
   paymentMethod: 'GCash',
-  amount: 2500,
+  amount: 5000,
   referenceNumber: 'GC-REF-1001',
   receipt: receipt(),
   ...overrides
@@ -81,6 +81,7 @@ afterAll(async () => {
 
 beforeEach(async () => {
   await clearTestDB();
+  await User.create({ id: 'admin-a', name: 'Admin A', email: 'admin@example.com', role: 'admin' });
   await Order.create({
     orderId,
     customerId: 'customer-a',
@@ -109,6 +110,9 @@ describe('Phase 2 order payment verification', () => {
     const incomplete = await request(app).post(`/api/orders/${orderId}/payments`).set(auth('customer')).send(paymentPayload({ receipt: undefined }));
     expect(incomplete.status).toBe(400);
     expect((await request(app).post(`/api/orders/${orderId}/payments`).set(auth('customer')).send(paymentPayload({ amount: 0 }))).status).toBe(400);
+    expect((await request(app).post(`/api/orders/${orderId}/payments`).set(auth('customer')).send(paymentPayload({ amount: -1 }))).status).toBe(400);
+    expect((await request(app).post(`/api/orders/${orderId}/payments`).set(auth('customer')).send(paymentPayload({ amount: 'not-a-number' }))).status).toBe(400);
+    expect((await request(app).post(`/api/orders/${orderId}/payments`).set(auth('customer')).send(paymentPayload({ amount: 5000.001 }))).status).toBe(400);
     expect((await request(app).post(`/api/orders/${orderId}/payments`).set(auth('customer')).send(paymentPayload({ paymentMethod: 'Cash' }))).status).toBe(400);
     expect((await Order.findOne({ orderId })).paymentStatus).toBe('Unpaid');
   });
@@ -119,6 +123,7 @@ describe('Phase 2 order payment verification', () => {
     expect(submitted.body.order.paymentStatus).toBe('For Verification');
     expect(submitted.body.order.status).toBe('Pending');
     expect(submitted.body.order.latestPayment.referenceNumber).toBe('GC-REF-1001');
+    expect(await Notification.countDocuments({ recipientId: 'admin-a', type: 'payment_submitted' })).toBe(1);
 
     const saved = await Order.findOne({ orderId });
     const payment = saved.paymentSubmissions[0];
@@ -131,7 +136,8 @@ describe('Phase 2 order payment verification', () => {
     const queue = await request(app).get('/api/admin/payments/verification').set(auth('admin'));
     expect(queue.status).toBe(200);
     expect(queue.body.payments[0].orderId).toBe(orderId);
-    expect(queue.body.payments[0].payment.amount).toBe(2500);
+    expect(queue.body.payments[0].payment.amount).toBe(5000);
+    expect(queue.body.payments[0].amountMatchesOrderTotal).toBe(true);
 
     const receiptResponse = await request(app).get(`/api/admin/orders/${orderId}/payments/${payment.id}/receipt`).set(auth('admin'));
     expect(receiptResponse.status).toBe(200);
@@ -148,6 +154,59 @@ describe('Phase 2 order payment verification', () => {
     expect(persisted.paymentStatus).toBe('Verified');
     expect(persisted.status).toBe('Confirmed');
     expect(persisted.paymentSubmissions[0].verifiedBy).toBe('admin-a');
+    expect(await Notification.countDocuments({ recipientId: 'customer-a', type: 'payment_verified', relatedOrderId: orderId })).toBe(1);
+  });
+
+  it('requires the exact historical order total and rejects underpayments and overpayments', async () => {
+    const under = await request(app).post(`/api/orders/${orderId}/payments`).set(auth('customer')).send(paymentPayload({ amount: 4999.99 }));
+    expect(under.status).toBe(422);
+    expect(under.body.error).toMatch(/full payment/i);
+    const over = await request(app).post(`/api/orders/${orderId}/payments`).set(auth('customer')).send(paymentPayload({ amount: 5000.01 }));
+    expect(over.status).toBe(422);
+    const saved = await Order.findOne({ orderId });
+    expect(saved.totalAmount).toBe(5000);
+    expect(saved.paymentStatus).toBe('Unpaid');
+    expect(saved.paymentSubmissions).toHaveLength(0);
+  });
+
+  it('handles valid decimal-cent totals without floating-point equality errors', async () => {
+    await Order.updateOne({ orderId }, { $set: { totalAmount: 2800.10 } });
+    const response = await request(app).post(`/api/orders/${orderId}/payments`).set(auth('customer')).send(paymentPayload({ amount: 2800.10 }));
+    expect(response.status).toBe(200);
+    expect(response.body.order.latestPayment.amount).toBe(2800.10);
+  });
+
+  it('blocks approval of an existing mismatched submission without changing either state', async () => {
+    const mismatched = {
+      customerId: 'customer-a', paymentMethod: 'GCash', amount: 1, referenceNumber: 'LEGACY-MISMATCH',
+      receiptFileName: 'legacy.png', receiptFilePath: path.join(directory, 'legacy.png'), receiptOriginalName: 'legacy.png',
+      receiptFileType: 'image/png', status: 'For Verification', submittedAt: new Date()
+    };
+    await Order.updateOne({ orderId }, { $push: { paymentSubmissions: mismatched }, $set: { paymentStatus: 'For Verification' } });
+    const saved = await Order.findOne({ orderId });
+    const paymentId = saved.paymentSubmissions.at(-1)._id;
+    const response = await request(app).patch(`/api/admin/orders/${orderId}/payments/${paymentId}/review`).set(auth('admin')).send({ action: 'approve' });
+    expect(response.status).toBe(409);
+    const unchanged = await Order.findOne({ orderId });
+    expect(unchanged.status).toBe('Pending');
+    expect(unchanged.paymentStatus).toBe('For Verification');
+    expect(unchanged.paymentSubmissions.at(-1).status).toBe('For Verification');
+    expect(unchanged.totalAmount).toBe(5000);
+  });
+
+  it('allows only one of two concurrent approval attempts to take effect', async () => {
+    const submitted = await request(app).post(`/api/orders/${orderId}/payments`).set(auth('customer')).send(paymentPayload());
+    const endpoint = `/api/admin/orders/${orderId}/payments/${submitted.body.order.latestPayment.id}/review`;
+    const responses = await Promise.all([
+      request(app).patch(endpoint).set(auth('admin')).send({ action: 'approve' }),
+      request(app).patch(endpoint).set(auth('admin')).send({ action: 'approve' })
+    ]);
+    expect(responses.map(response => response.status).sort()).toEqual([200, 409]);
+    const saved = await Order.findOne({ orderId });
+    expect(saved.paymentSubmissions.filter(payment => payment.status === 'Verified')).toHaveLength(1);
+    expect(saved.paymentStatus).toBe('Verified');
+    expect(saved.status).toBe('Confirmed');
+    expect(await Notification.countDocuments({ recipientId: 'customer-a', type: 'payment_verified', relatedOrderId: orderId })).toBe(1);
   });
 
   it('rejects a receipt with a reason and allows another payment submission', async () => {
@@ -159,6 +218,8 @@ describe('Phase 2 order payment verification', () => {
     expect(rejected.body.order.status).toBe('Pending');
     expect(rejected.body.order.paymentStatus).toBe('Rejected');
     expect(rejected.body.order.paymentRejectionReason).toBe('Reference could not be verified.');
+    const rejectionNotice = await Notification.findOne({ recipientId: 'customer-a', type: 'payment_rejected', relatedOrderId: orderId }).lean();
+    expect(rejectionNotice.message).toContain('Reference could not be verified.');
 
     const resubmitted = await request(app).post(`/api/orders/${orderId}/payments`).set(auth('customer'))
       .send(paymentPayload({ referenceNumber: 'GC-REF-1002', receipt: receipt('receipt-again.png') }));

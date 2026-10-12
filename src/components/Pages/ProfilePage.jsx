@@ -7,7 +7,7 @@ import { Card } from "../Common/Card";
 import { Btn } from "../Common/Btn";
 import { Input } from "../Common/Input";
 
-export const ProfilePage = ({ user, setUser, showToast }) => {
+export const ProfilePage = ({ user, setUser, showToast, dark = false }) => {
   const isSupabaseUser = user?.authProvider === "supabase";
   const profileName = user?.name || user?.user_metadata?.full_name || user?.user_metadata?.name || "";
   const profileAvatar = user?.avatar || user?.user_metadata?.avatar_url || user?.user_metadata?.picture || "";
@@ -75,7 +75,7 @@ export const ProfilePage = ({ user, setUser, showToast }) => {
         margin: "40px auto",
         padding: "0 24px"
       }}
-      className="fade-in"
+      className={`fade-in bm-profile-page${dark ? ' bm-profile-page--dark' : ''}`}
     >
       <h1
         style={{

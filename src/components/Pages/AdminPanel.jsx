@@ -3,16 +3,22 @@ import { ArchivedOrders, CompletedOrdersReport } from './AdminOrderArchive';
 import { InventoryMaterials } from './InventoryMaterials';
 import { ORDER_STATUSES, displayOrderStatus } from '../../../shared/orderWorkflow';
 import { orderApi } from '../../utils/orderApi';
+import { publicAsset } from '../../utils/assets';
 import { store } from '../../utils/storage';
 import { StaffOrders } from './StaffOrders';
 import { AdminPayments } from './AdminPayments';
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { C } from '../../constants/colors';
 import { showToast } from '../../utils/notifications';
+import { NotificationBell } from '../Common/NotificationBell';
 import { Card } from '../Common/Card';
 import { Btn } from '../Common/Btn';
 import { Input } from '../Common/Input';
 import { Badge } from '../Common/Badge';
+import { BMLogo } from '../Common/BMLogo';
+import { PickupConfirmationModal } from '../Common/PickupConfirmationModal';
+import { EmployeeManagement } from './EmployeeManagement';
+import './AdminPanel.css';
 
 const STATUS_LIST = ORDER_STATUSES;
 const ORDER_STATUS_COLORS = {
@@ -44,96 +50,98 @@ const getToken = async () => {
 };
 const api = async (url, opts = {}) => orderApi(url, opts, await store.get('session'));
 
-const SIDEBAR_ITEMS = [
-  { id: 'dashboard', icon: '📊', label: 'Dashboard' },
-  { id: 'orders', icon: '📋', label: 'Orders' },
-  { id: 'pickup', icon: '📤', label: 'Ready for Pickup' },
-  { id: 'payments', icon: '💳', label: 'Payments for Verification' },
-  { id: 'products', icon: '📦', label: 'Products' },
-  { id: 'jobs', icon: '??', label: 'Job Orders' },
-  { id: 'archive', icon: '🗄️', label: 'Archived Orders' },
-  { id: 'inventory', icon: '🏭', label: 'Inventory' },
-  { id: 'production', icon: '⚙', label: 'Production' },
-  { id: 'customers', icon: '👥', label: 'Customers' },
-  { id: 'reports', icon: '📈', label: 'Reports' },
-  { id: 'audit', icon: '📝', label: 'Audit Logs' },
-  { id: 'system', icon: '🔧', label: 'System' },
+const SIDEBAR_GROUPS = [
+  { label: 'Overview', items: [{ id: 'dashboard', icon: 'dashboard', label: 'Dashboard' }] },
+  { label: 'Management', items: [
+    { id: 'products', icon: 'box', label: 'Products' },
+    { id: 'orders', icon: 'orders', label: 'Orders' },
+    { id: 'customers', icon: 'users', label: 'Customers' },
+    { id: 'employees', icon: 'badge', label: 'Staff / Employees' }
+  ]},
+  { label: 'Operations', items: [
+    { id: 'payments', icon: 'card', label: 'Payments for Verification' },
+    { id: 'jobs', icon: 'clipboard', label: 'Job Orders' },
+    { id: 'inventory', icon: 'layers', label: 'Inventory' },
+    { id: 'production', icon: 'settings', label: 'Production' },
+    { id: 'pickup', icon: 'package', label: 'Ready for Pickup' },
+    { id: 'archive', icon: 'archive', label: 'Archived Orders' }
+  ]},
+  { label: 'Analytics', items: [
+    { id: 'reports', icon: 'chart', label: 'Reports' },
+    { id: 'audit', icon: 'file', label: 'Audit Logs' }
+  ]},
+  { label: 'System', items: [{ id: 'system', icon: 'sliders', label: 'System Settings' }] }
 ];
+const SIDEBAR_ITEMS = SIDEBAR_GROUPS.flatMap(group => group.items);
 
-const Sidebar = ({ tab, setTab, sidebarOpen }) => {
+const Icon = ({ name, size = 18 }) => {
+  const paths = {
+    dashboard: <><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></>,
+    box: <><path d="M21 8l-9 5-9-5"/><path d="M3 8l9-5 9 5v8l-9 5-9-5z"/><path d="M12 13v8"/></>,
+    orders: <><rect x="5" y="3" width="14" height="18" rx="2"/><path d="M9 7h6M9 11h6M9 15h4"/></>,
+    users: <><path d="M16 21v-2a4 4 0 00-4-4H6a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75"/></>,
+    badge: <><rect x="3" y="5" width="18" height="14" rx="2"/><circle cx="9" cy="11" r="2"/><path d="M6 16c.8-2 5.2-2 6 0M14 9h4M14 13h4"/></>,
+    card: <><rect x="2" y="5" width="20" height="14" rx="2"/><path d="M2 10h20M6 15h2"/></>,
+    clipboard: <><rect x="4" y="4" width="16" height="18" rx="2"/><path d="M9 4V2h6v2M8 10h8M8 14h8M8 18h5"/></>,
+    layers: <><path d="M12 2l10 5-10 5L2 7zM2 12l10 5 10-5M2 17l10 5 10-5"/></>,
+    settings: <><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 00.3 1.9l.1.1-2.8 2.8-.1-.1a1.7 1.7 0 00-1.9-.3 1.7 1.7 0 00-1 1.6v.2h-4V21a1.7 1.7 0 00-1-1.6 1.7 1.7 0 00-1.9.3l-.1.1L4.2 17l.1-.1a1.7 1.7 0 00.3-1.9A1.7 1.7 0 003 14H2v-4h1a1.7 1.7 0 001.6-1 1.7 1.7 0 00-.3-1.9L4.2 7 7 4.2l.1.1A1.7 1.7 0 009 4.6 1.7 1.7 0 0010 3V2h4v1a1.7 1.7 0 001 1.6 1.7 1.7 0 001.9-.3l.1-.1L19.8 7l-.1.1a1.7 1.7 0 00-.3 1.9 1.7 1.7 0 001.6 1h1v4h-1a1.7 1.7 0 00-1.6 1z"/></>,
+    package: <><path d="M21 8l-9 5-9-5M3 8l9-5 9 5v8l-9 5-9-5zM12 13v8"/><path d="M16 6l-9 5"/></>,
+    archive: <><path d="M3 5h18v4H3zM5 9v11h14V9M9 13h6"/></>,
+    chart: <><path d="M3 3v18h18M7 16l4-5 4 3 5-7"/></>,
+    file: <><path d="M6 2h9l5 5v15H6zM14 2v6h6M9 13h6M9 17h6"/></>,
+    sliders: <><path d="M4 21v-7M4 10V3M12 21v-9M12 8V3M20 21v-5M20 12V3M1 14h6M9 8h6M17 16h6"/></>,
+    menu: <path d="M4 6h16M4 12h16M4 18h16"/>
+  };
+  return <svg aria-hidden="true" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">{paths[name] || paths.file}</svg>;
+};
+
+const Sidebar = ({ tab, onNavigate, sidebarOpen }) => {
   return (
-    <aside style={{
-      width: sidebarOpen ? 220 : 0,
-      minWidth: sidebarOpen ? 220 : 0,
-      background: C.black,
-      color: '#fff',
-      overflowY: 'auto',
-      overflowX: 'hidden',
-      transition: 'width 0.2s, min-width 0.2s',
-      display: 'flex',
-      flexDirection: 'column',
-      flexShrink: 0
-    }}>
+    <aside className={`bm-admin-sidebar${sidebarOpen ? ' is-open' : ''}`}>
       {sidebarOpen && (
-        <div style={{ padding: '20px 16px 8px', borderBottom: '1px solid #333' }}>
-          <div style={{ fontWeight: 800, fontSize: 15, fontFamily: 'Montserrat', color: C.red }}>BM ADMIN</div>
-          <div style={{ fontSize: 11, color: '#888', marginTop: 2 }}>Printing Services</div>
+        <div className="bm-admin-brand">
+          <BMLogo size={42} />
+          <div><strong>BM Printing</strong><span>Admin workspace</span></div>
         </div>
       )}
-      {sidebarOpen && SIDEBAR_ITEMS.map(item => (
-        <button
-          key={item.id}
-          onClick={() => setTab(item.id)}
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            gap: 10,
-            padding: '11px 16px',
-            background: tab === item.id ? C.red : 'transparent',
-            color: tab === item.id ? '#fff' : '#aaa',
-            border: 'none',
-            width: '100%',
-            textAlign: 'left',
-            fontSize: 13,
-            fontWeight: tab === item.id ? 700 : 500,
-            fontFamily: 'Montserrat',
-            cursor: 'pointer',
-            borderRadius: '0 8px 8px 0',
-            marginRight: 8
-          }}
-        >
-          <span style={{ fontSize: 16, width: 22 }}>{item.icon}</span>
-          {item.label}
-        </button>
-      ))}
+      {sidebarOpen && <nav className="bm-admin-nav">{SIDEBAR_GROUPS.map(group => (
+        <div className="bm-admin-nav-group" key={group.label}>
+          <div className="bm-admin-nav-label">{group.label}</div>
+          {group.items.map(item => <button key={item.id} className={tab === item.id ? 'is-active' : ''} onClick={() => onNavigate(item.id)} aria-current={tab === item.id ? 'page' : undefined}>
+            <Icon name={item.icon} /><span>{item.label}</span>
+          </button>)}
+        </div>
+      ))}</nav>}
     </aside>
   );
 };
 
-const StatCard = ({ label, value, color = C.info }) => (
-  <Card style={{ padding: '14px 18px', textAlign: 'center', minWidth: 0 }}>
-    <div style={{ fontSize: 26, fontWeight: 800, fontFamily: 'Montserrat', color }}>{value}</div>
-    <div style={{ fontSize: 11, color: C.gray600, marginTop: 2 }}>{label}</div>
+const StatCard = ({ label, value, icon = 'orders' }) => (
+  <Card className="bm-admin-stat">
+    <span className="bm-admin-stat-icon"><Icon name={icon} /></span>
+    <div><div className="bm-admin-stat-value">{value}</div><div className="bm-admin-stat-label">{label}</div></div>
   </Card>
 );
 
 const StatusRow = ({ label, count, total, color }) => {
   const pct = total > 0 ? Math.round((count / total) * 100) : 0;
   return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 6 }}>
-      <span style={{ fontSize: 13, color: C.gray800, width: 120, flexShrink: 0 }}>{label}</span>
-      <div style={{ flex: 1, height: 8, background: C.gray100, borderRadius: 4, overflow: 'hidden' }}>
-        <div style={{ width: `${pct}%`, height: '100%', background: color, borderRadius: 4, transition: 'width 0.3s' }} />
+    <div className="bm-admin-status-row">
+      <span className="bm-admin-status-label">{label}</span>
+      <div className="bm-admin-status-track" aria-hidden="true">
+        <div className="bm-admin-status-fill" style={{ width: `${pct}%`, background: color }} />
       </div>
-      <span style={{ fontSize: 13, fontWeight: 600, color: C.gray600, width: 30, textAlign: 'right' }}>{count}</span>
+      <span className="bm-admin-status-count">{count}</span>
     </div>
   );
 };
 
-export default function AdminPanel({ user, showToast: notify }) {
-  const [tab, setTab] = useState('orders');
-  const [sidebarOpen, setSidebarOpen] = useState(true);
+export default function AdminPanel({ user, showToast: notify, onLogout }) {
+  const [tab, setTab] = useState('dashboard');
+  const [sidebarOpen, setSidebarOpen] = useState(() => typeof window === 'undefined' || window.innerWidth > 720);
   const [summary, setSummary] = useState(null);
+  const [dashboardLoading, setDashboardLoading] = useState(true);
+  const [dashboardError, setDashboardError] = useState('');
   const [orders, setOrders] = useState([]);
   const [products, setProducts] = useState([]);
   const [inventory, setInventory] = useState([]);
@@ -146,10 +154,17 @@ export default function AdminPanel({ user, showToast: notify }) {
   const [analytics, setAnalytics] = useState(null);
   const [systemHealth, setSystemHealth] = useState(null);
   const [customers, setCustomers] = useState([]);
+  const [customersLoading, setCustomersLoading] = useState(false);
+  const [customersError, setCustomersError] = useState('');
+  const [customersWarning, setCustomersWarning] = useState('');
   const [auditLogs, setAuditLogs] = useState([]);
   const [editingProduct, setEditingProduct] = useState(null);
-  const [newProduct, setNewProduct] = useState({ name: '', category: '', description: '', price: '', stock: '', lowStockThreshold: '', status: 'Active', image: '' });
+  const emptyProduct = { name: '', category: '', description: '', price: '', minQty: 1, unit: 'per piece', image: '', imageFit: 'contain', specificationType: 'general', popular: false, active: true, trackStock: false, stock: 0, lowStockThreshold: 0 };
+  const [newProduct, setNewProduct] = useState(emptyProduct);
   const [newProductImage, setNewProductImage] = useState(null);
+  const [productLoading, setProductLoading] = useState(false);
+  const [productError, setProductError] = useState('');
+  const [productSearch, setProductSearch] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
   const [pickupOrders, setPickupOrders] = useState([]);
   const [pickupLoading, setPickupLoading] = useState(false);
@@ -158,27 +173,73 @@ export default function AdminPanel({ user, showToast: notify }) {
   const [pickupDetailLoading, setPickupDetailLoading] = useState(false);
   const [pickupConfirming, setPickupConfirming] = useState(false);
   const [pickupReceivedBy, setPickupReceivedBy] = useState('');
+  const [pickupActionError, setPickupActionError] = useState('');
   const [stockMovements, setStockMovements] = useState([]);
   const [movementsLoading, setMovementsLoading] = useState(false);
+  const [accountOpen, setAccountOpen] = useState(false);
+  const accountMenuRef = useRef(null);
+
+  useEffect(() => {
+    if (!accountOpen) return undefined;
+    const closeOnOutsideClick = event => {
+      if (!accountMenuRef.current?.contains(event.target)) setAccountOpen(false);
+    };
+    const closeOnEscape = event => {
+      if (event.key === 'Escape') {
+        setAccountOpen(false);
+        accountMenuRef.current?.querySelector('.bm-admin-account-trigger')?.focus();
+      }
+    };
+    document.addEventListener('pointerdown', closeOnOutsideClick);
+    document.addEventListener('keydown', closeOnEscape);
+    return () => {
+      document.removeEventListener('pointerdown', closeOnOutsideClick);
+      document.removeEventListener('keydown', closeOnEscape);
+    };
+  }, [accountOpen]);
 
   const loadData = useCallback(async () => {
     const loaders = {
       dashboard: async () => {
-        try { const d = await api('/api/dashboard/summary'); if (d.success) setSummary(d.data); } catch {}
-        try { const d = await api('/api/admin/orders'); if (d.orders) setOrders(d.orders); } catch {}
-        try { const d = await api('/api/products'); if (d.products) setProducts(d.products); } catch {}
+        setDashboardLoading(true);
+        setDashboardError('');
+        try {
+          const [summaryResult, ordersResult] = await Promise.all([
+            api('/api/dashboard/summary'),
+            api('/api/admin/orders')
+          ]);
+          if (!summaryResult?.success || !summaryResult.data || !Array.isArray(ordersResult?.orders)) {
+            throw new Error('The dashboard API returned an invalid response.');
+          }
+          setSummary(summaryResult.data);
+          setOrders(ordersResult.orders);
+          const [productResult, inventoryResult] = await Promise.allSettled([
+            api('/api/products'), api('/api/inventory/low-stock')
+          ]);
+          setProducts(productResult.status === 'fulfilled' && Array.isArray(productResult.value?.products) ? productResult.value.products : []);
+          setLowStock(inventoryResult.status === 'fulfilled' && Array.isArray(inventoryResult.value?.inventory) ? inventoryResult.value.inventory : []);
+        } catch (error) {
+          setSummary(null);
+          setOrders([]);
+          setDashboardError(error.message || 'Unable to load dashboard data.');
+        } finally {
+          setDashboardLoading(false);
+        }
       },
       orders: async () => {
         try { const d = await api('/api/admin/orders'); if (d.orders) setOrders(d.orders); } catch {}
       },
       pickup: async () => {
         setPickupLoading(true);
-        try { const d = await api('/api/orders/ready-for-pickup'); if (d.orders) setPickupOrders(d.orders); setPickupError(''); }
+        try { const d = await api('/api/pickup/orders'); if (d.orders) setPickupOrders(d.orders); setPickupError(''); }
         catch (e) { setPickupError(e.message); }
         finally { setPickupLoading(false); }
       },
       products: async () => {
-        try { const d = await api('/api/products'); if (d.products) setProducts(d.products); } catch {}
+        setProductLoading(true); setProductError('');
+        try { const d = await api('/api/admin/products'); if (Array.isArray(d.products)) setProducts(d.products); }
+        catch (error) { setProducts([]); setProductError(error.message || 'Unable to load product management.'); }
+        finally { setProductLoading(false); }
       },
       inventory: async () => {
         try { const d = await api('/api/inventory'); if (d.inventory) setInventory(d.inventory); } catch {}
@@ -189,7 +250,14 @@ export default function AdminPanel({ user, showToast: notify }) {
         try { const d = await api('/api/production'); if (d.productions) setProductions(d.productions); } catch {}
       },
       customers: async () => {
-        try { const d = await api('/api/search/customers?query=' + encodeURIComponent(searchQuery)); if (d.customers) setCustomers(d.customers); } catch {}
+        setCustomersLoading(true); setCustomersError('');
+        try {
+          const d = await api('/api/search/customers?query=' + encodeURIComponent(searchQuery));
+          setCustomers(Array.isArray(d.customers) ? d.customers : []);
+          setCustomersWarning(d.warnings?.map(warning => warning.message).join(' ') || '');
+        } catch (error) {
+          setCustomers([]); setCustomersWarning(''); setCustomersError(error.message || 'Customer directory could not be loaded.');
+        } finally { setCustomersLoading(false); }
       },
       reports: async () => {
         try { const d = await api('/api/bi/analytics'); if (d.success) setAnalytics(d.data); } catch {}
@@ -205,6 +273,12 @@ export default function AdminPanel({ user, showToast: notify }) {
   }, [tab, searchQuery, user]);
 
   useEffect(() => { loadData(); }, [loadData]);
+
+  const navigateAdmin = useCallback((nextTab) => {
+    setAccountOpen(false);
+    setTab(nextTab);
+    if (window.innerWidth <= 720) setSidebarOpen(false);
+  }, []);
 
   const loadReport = async (date) => {
     setReportLoading(true);
@@ -222,20 +296,24 @@ export default function AdminPanel({ user, showToast: notify }) {
 
   const handleProductSubmit = async (e) => {
     e.preventDefault();
-    const { name, category, description, price, stock, lowStockThreshold, status } = newProduct;
-    if (!name || !category || !description || !price || stock === '' || lowStockThreshold === '') {
+    const { name, category, description, price } = newProduct;
+    if (!name || !category || !description || !price) {
       showToast('All required fields must be filled.', 'error'); return;
+    }
+    const numericPrice = Number(price);
+    if (!Number.isInteger(numericPrice) || numericPrice < 1) {
+      showToast('Price must be a positive whole PHP amount.', 'error'); return;
     }
     try {
       await api('/api/products', {
         method: 'POST',
         body: JSON.stringify({
-          name, category, description, price: Number(price), stock: Number(stock),
-          lowStockThreshold: Number(lowStockThreshold), status, image: newProduct.image
+          ...newProduct, price: numericPrice, minQty: Number(newProduct.minQty),
+          stock: Number(newProduct.stock), lowStockThreshold: Number(newProduct.lowStockThreshold)
         })
       });
       showToast('Product added.', 'success');
-      setNewProduct({ name: '', category: '', description: '', price: '', stock: '', lowStockThreshold: '', status: 'Active', image: '' });
+      setNewProduct(emptyProduct);
       setNewProductImage(null);
       loadData();
     } catch (e) { showToast(e.message || 'Failed.', 'error'); }
@@ -244,25 +322,30 @@ export default function AdminPanel({ user, showToast: notify }) {
   const handleProductEdit = async (e) => {
     e.preventDefault();
     if (!editingProduct) return;
+    const numericPrice = Number(newProduct.price);
+    if (!Number.isInteger(numericPrice) || numericPrice < 1) {
+      showToast('Price must be a positive whole PHP amount.', 'error'); return;
+    }
     try {
       await api(`/api/products/${editingProduct}`, {
         method: 'PATCH',
         body: JSON.stringify({
-          name: newProduct.name, category: newProduct.category, description: newProduct.description,
-          price: Number(newProduct.price), stock: Number(newProduct.stock),
-          lowStockThreshold: Number(newProduct.lowStockThreshold), status: newProduct.status, image: newProduct.image
+          ...newProduct, price: numericPrice, minQty: Number(newProduct.minQty),
+          stock: Number(newProduct.stock), lowStockThreshold: Number(newProduct.lowStockThreshold)
         })
       });
       showToast('Product updated.', 'success');
       setEditingProduct(null);
-      setNewProduct({ name: '', category: '', description: '', price: '', stock: '', lowStockThreshold: '', status: 'Active', image: '' });
+      setNewProduct(emptyProduct);
       loadData();
     } catch (e) { showToast(e.message || 'Failed.', 'error'); }
   };
 
   const handleDelete = async (productId) => {
-    if (!confirm('Archive this product?')) return;
-    try { await api(`/api/products/${productId}`, { method: 'PATCH', body: JSON.stringify({ active: false }) }); showToast('Archived.', 'success'); loadData(); }
+    const product = products.find(item => item.id === productId);
+    const active = !product?.active;
+    if (!confirm(`${active ? 'Activate' : 'Deactivate'} ${product?.name || 'this product'}?`)) return;
+    try { await api(`/api/products/${productId}`, { method: 'PATCH', body: JSON.stringify({ active }) }); showToast(active ? 'Product activated.' : 'Product deactivated.', 'success'); loadData(); }
     catch (e) { showToast(e.message || 'Failed.', 'error'); }
   };
 
@@ -278,7 +361,7 @@ export default function AdminPanel({ user, showToast: notify }) {
 
   const statusCounts = {};
   orders.forEach(o => { statusCounts[displayOrderStatus(o.status)] = (statusCounts[displayOrderStatus(o.status)] || 0) + 1; });
-  const lowStockProducts = products.filter(p => p.stock <= p.lowStockThreshold);
+  const lowStockProducts = products.filter(p => p.trackStock === true && p.stock <= p.lowStockThreshold);
   const prodCounts = {};
   productions.forEach(p => { prodCounts[p.status] = (prodCounts[p.status] || 0) + 1; });
 
@@ -310,7 +393,7 @@ export default function AdminPanel({ user, showToast: notify }) {
   const renderTab = () => {
     switch (tab) {
       case 'dashboard': return renderDashboard();
-      case 'orders': return <StaffOrders user={user} showToast={notify} />;
+      case 'orders': return <StaffOrders user={user} showToast={notify} onReviewPayment={() => navigateAdmin('payments')} />;
       case 'pickup': return renderPickup();
       case 'payments': return <AdminPayments user={user} showToast={notify} />;
       case 'products': return renderProducts();
@@ -319,6 +402,7 @@ export default function AdminPanel({ user, showToast: notify }) {
       case 'archive': return <ArchivedOrders user={user} />;
       case 'production': return renderProduction();
       case 'customers': return renderCustomers();
+      case 'employees': return <EmployeeManagement showToast={notify || showToast} />;
       case 'reports': return <><CompletedOrdersReport user={user} />{renderReports()}</>;
       case 'audit': return renderAudit();
       case 'system': return renderSystem();
@@ -330,6 +414,7 @@ export default function AdminPanel({ user, showToast: notify }) {
     setPickupDetailLoading(true);
     setPickupDetail(null);
     setPickupReceivedBy('');
+    setPickupActionError('');
     try {
       const d = await api(`/api/orders/${encodeURIComponent(orderId)}/pickup-details`);
       setPickupDetail(d);
@@ -342,16 +427,22 @@ export default function AdminPanel({ user, showToast: notify }) {
 
   const confirmPickup = async () => {
     if (!pickupDetail || pickupConfirming) return;
+    if (pickupReceivedBy.trim().length < 2) {
+      setPickupActionError('Enter the full name of the person collecting the order.');
+      return;
+    }
     setPickupConfirming(true);
+    setPickupActionError('');
     try {
       const d = await api(`/api/orders/${encodeURIComponent(pickupDetail.order.id)}/confirm-pickup`, {
         method: 'POST',
-        body: JSON.stringify({ receivedByName: pickupReceivedBy || undefined })
+        body: JSON.stringify({ receivedByName: pickupReceivedBy.trim() })
       });
-      showToast(`Order ${d.order.id} confirmed as Picked Up. Inventory deducted.`, 'success');
+      showToast(`Order ${d.order.id} confirmed as Picked Up.`, 'success');
       setPickupDetail(null);
       loadData();
     } catch (e) {
+      setPickupActionError(e.message || 'Failed to confirm pickup.');
       showToast(e.message || 'Failed to confirm pickup.', 'error');
     } finally {
       setPickupConfirming(false);
@@ -367,7 +458,7 @@ export default function AdminPanel({ user, showToast: notify }) {
         <Card><p style={{ textAlign: 'center', color: C.gray400, padding: 20 }}>No orders ready for pickup.</p></Card>
       )}
       {pickupOrders.length > 0 && (
-        <Card>
+        <Card className="bm-admin-chart-card">
           <div style={{ overflowX: 'auto' }}>
             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
               <thead>
@@ -401,9 +492,9 @@ export default function AdminPanel({ user, showToast: notify }) {
       )}
 
       {/* Pickup Detail Modal */}
-      {pickupDetail && (
-        <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }} onClick={() => !pickupConfirming && setPickupDetail(null)}>
-          <div style={{ background: '#fff', borderRadius: 12, padding: 24, maxWidth: 680, width: '90%', maxHeight: '85vh', overflowY: 'auto' }} onClick={e => e.stopPropagation()}>
+      {false && pickupDetail && (
+        <div className="bm-admin-dialog-backdrop" style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }} onClick={() => !pickupConfirming && setPickupDetail(null)}>
+          <div className="bm-admin-dialog" style={{ background: '#fff', borderRadius: 12, padding: 24, maxWidth: 680, width: '90%', maxHeight: '85vh', overflowY: 'auto' }} onClick={e => e.stopPropagation()}>
             <h3 style={{ margin: '0 0 16px', fontFamily: 'Montserrat', fontSize: 18 }}>Confirm Pickup — {pickupDetail.order.id}</h3>
             {pickupDetailLoading && <p style={{ textAlign: 'center', color: '#666' }}>Loading...</p>}
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, marginBottom: 16 }}>
@@ -456,6 +547,10 @@ export default function AdminPanel({ user, showToast: notify }) {
           </div>
         </div>
       )}
+      <PickupConfirmationModal open={Boolean(pickupDetail)} detail={pickupDetail} loading={pickupDetailLoading}
+        error={pickupActionError} receiverName={pickupReceivedBy}
+        onReceiverChange={value => { setPickupReceivedBy(value); setPickupActionError(''); }} confirming={pickupConfirming}
+        onClose={() => { setPickupDetail(null); setPickupActionError(''); }} onConfirm={confirmPickup} />
     </div>
   );
 
@@ -482,7 +577,7 @@ export default function AdminPanel({ user, showToast: notify }) {
                   <td style={tdStyle}>{fmtDate(m.createdAt)}</td>
                   <td style={tdStyle}>{m.material}</td>
                   <td style={tdStyle}><Badge status={m.movementType === 'OUT' ? 'Cancelled' : 'Completed'} /></td>
-                  <td style={tdStyle} style={{ color: m.movementType === 'OUT' ? '#c62828' : '#1a7a3a', fontWeight: 600 }}>{m.movementType === 'OUT' ? '-' : '+'}{m.quantity}</td>
+                  <td style={{ ...tdStyle, color: m.movementType === 'OUT' ? '#c62828' : '#1a7a3a', fontWeight: 600 }}>{m.movementType === 'OUT' ? '-' : '+'}{m.quantity}</td>
                   <td style={tdStyle}>{m.orderId}</td>
                   <td style={tdStyle}>{m.reason === 'ORDER_PICKUP' ? 'Order Pickup' : m.reason === 'RESTOCK' ? 'Restock' : m.reason}</td>
                   <td style={tdStyle}>{m.performedByName || m.performedBy}</td>
@@ -495,47 +590,56 @@ export default function AdminPanel({ user, showToast: notify }) {
     </Card>
   );
 
-  const renderDashboard = () => (
-    <div>
-      <h3 style={sectionTitle}>Dashboard Overview</h3>
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 14, marginBottom: 28 }}>
-        <StatCard label="Total Orders" value={summary?.totalOrders || 0} color={C.info} />
-        <StatCard label="Total Revenue" value={fmt(summary?.totalRevenue)} color={C.success} />
-        <StatCard label="Pending Orders" value={summary?.pendingOrders || 0} color={C.warning} />
-        <StatCard label="Completed Orders" value={summary?.completedOrders || 0} color={C.success} />
-        <StatCard label="In Production" value={summary?.inProduction || 0} color="#e65100" />
-        <StatCard label="Ready for Pickup" value={summary?.readyForPickup || 0} color={C.info} />
+  const renderDashboard = () => {
+    if (dashboardLoading) return (
+      <div className="bm-admin-dashboard">
+        <div className="bm-admin-heading"><div><span>Overview</span><h3>Dashboard</h3><p>Live operational data from your order system.</p></div></div>
+        <Card className="bm-admin-state" role="status"><div className="bm-admin-state-spinner" /><h4>Loading dashboard</h4><p>Retrieving current order metrics.</p></Card>
+      </div>
+    );
+    if (dashboardError) return (
+      <div className="bm-admin-dashboard">
+        <div className="bm-admin-heading"><div><span>Overview</span><h3>Dashboard</h3><p>Live operational data from your order system.</p></div></div>
+        <Card className="bm-admin-state is-error" role="alert"><Icon name="file" size={24} /><h4>Dashboard data is unavailable</h4><p>{dashboardError}</p><button type="button" className="bm-admin-retry" onClick={loadData}>Retry</button></Card>
+      </div>
+    );
+    return (
+    <div className="bm-admin-dashboard">
+      <div className="bm-admin-heading"><div><span>Overview</span><h3>Dashboard</h3><p>Live operational data from your order system.</p></div><div className="bm-admin-date">{new Date().toLocaleDateString('en-PH', { weekday: 'long', month: 'long', day: 'numeric' })}</div></div>
+      <div className="bm-admin-stat-grid">
+        <StatCard label="Total Orders" value={summary.totalOrders ?? 0} icon="orders" />
+        <StatCard label="Pending Orders" value={summary.pendingOrders ?? 0} icon="clipboard" />
+        <StatCard label="Orders Processing" value={summary.inProduction ?? 0} icon="settings" />
+        <StatCard label="Ready for Pickup" value={summary.readyForPickup ?? 0} icon="package" />
+        <StatCard label="Completed Orders" value={summary.completedOrders ?? 0} icon="archive" />
+        <StatCard label="Payments Awaiting Verification" value={summary.paymentsAwaitingVerification ?? 0} icon="card" />
       </div>
 
-      {lowStockProducts.length > 0 && (
-        <Card style={{ marginBottom: 20, borderColor: C.warning, background: C.warningBg }}>
-          <h4 style={{ margin: '0 0 10px', fontSize: 14, fontWeight: 700, color: C.warning }}>⚠ Inventory Alerts</h4>
-          {lowStockProducts.slice(0, 5).map(p => (
-            <div key={p.id} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, padding: '4px 0', color: C.gray800 }}>
-              <span>{p.name}</span>
-              <span style={{ fontWeight: 600, color: p.stock === 0 ? '#c62828' : C.warning }}>
-                {p.stock === 0 ? 'Out of Stock' : `${p.stock} remaining`}
-              </span>
-            </div>
-          ))}
-        </Card>
-      )}
+      {(lowStockProducts.length > 0 || lowStock.length > 0) && <Card className="bm-admin-inventory-alerts">
+        <div className="bm-admin-inventory-alerts__heading"><div><span>Inventory</span><h4>Stock Alerts</h4></div><strong>{lowStockProducts.length + lowStock.length}</strong></div>
+        <div className="bm-admin-inventory-alerts__list">
+          {lowStockProducts.slice(0, 5).map(product => <div key={`product-${product.id}`}><span><strong>{product.name}</strong><small>Tracked finished product</small></span><b>{product.stock === 0 ? 'Out of stock' : `${product.stock} remaining`}</b></div>)}
+          {lowStock.slice(0, 5).map(item => <div key={`material-${item.id || item._id || item.material}`}><span><strong>{item.material}</strong><small>Raw material</small></span><b>{Number(item.availableQuantity) <= 0 ? 'Out of stock' : `${item.availableQuantity} ${item.unit || ''} available`}</b></div>)}
+        </div>
+      </Card>}
 
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, marginBottom: 20 }}>
+      <div className="bm-admin-dashboard-grid">
         <Card>
           <h4 style={cardTitle}>Orders by Status</h4>
-          {STATUS_LIST.map(s => (
+          {orders.length ? STATUS_LIST.map(s => (
             <StatusRow key={s} label={s} count={statusCounts[s] || 0} total={orders.length || 1} color={ORDER_STATUS_COLORS[s]?.color || '#666'} />
-          ))}
+          )) : <div className="bm-admin-chart-empty"><Icon name="chart" size={22} /><span>No orders to summarize yet.</span></div>}
         </Card>
-        <Card>
-          <h4 style={cardTitle}>Top Products</h4>
-          {summary?.topServices?.length > 0 ? summary.topServices.map((s, i) => (
-            <div key={i} style={{ display: 'flex', justifyContent: 'space-between', padding: '7px 0', borderBottom: `1px solid ${C.gray100}`, fontSize: 13 }}>
-              <span style={{ color: C.gray800 }}>{s.name}</span>
-              <span style={{ fontWeight: 600, color: C.gray600 }}>{s.count} orders</span>
-            </div>
-          )) : <p style={{ fontSize: 13, color: C.gray400 }}>No data available</p>}
+        <Card className="bm-admin-trend-card">
+          <h4 style={cardTitle}>Orders Over Time</h4>
+          <div className="bm-admin-bars" aria-label="Orders created over the last seven days">
+            {(summary?.ordersOverTime || []).map(point => {
+              const max = Math.max(1, ...(summary?.ordersOverTime || []).map(row => row.count));
+              const height = point.count > 0 ? Math.max(4, point.count / max * 100) : 0;
+              return <div className="bm-admin-bar-column" key={point.date} title={`${point.count} orders on ${point.date}`}><span>{point.count}</span><div style={{ height: `${height}%` }} /><small>{new Date(`${point.date}T00:00:00`).toLocaleDateString('en-PH', { weekday: 'short' })}</small></div>;
+            })}
+            {!summary?.ordersOverTime?.length && <p className="bm-admin-muted">No order activity available.</p>}
+          </div>
         </Card>
       </div>
 
@@ -568,119 +672,66 @@ export default function AdminPanel({ user, showToast: notify }) {
                   </tr>
                 );
               })}
-              {orders.length === 0 && <tr><td colSpan={7} style={{ padding: 20, textAlign: 'center', color: C.gray400 }}>No orders found</td></tr>}
+              {orders.length === 0 && <tr><td colSpan={7} style={{ padding: 28, textAlign: 'center', color: C.gray400 }}>No orders have been recorded in this database.</td></tr>}
             </tbody>
           </table>
         </div>
       </Card>
 
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, marginBottom: 20 }}>
-        <Card>
-          <h4 style={cardTitle}>Production Overview</h4>
-          {['Queued','In Production','Quality Check','Ready','Completed','Delayed'].map(s => (
-            <StatusRow key={s} label={s} count={prodCounts[s] || 0} total={productions.length || 1} color={ORDER_STATUS_COLORS[s]?.color || '#666'} />
-          ))}
-        </Card>
-        <Card>
-          <h4 style={cardTitle}>System Status</h4>
-          {['Database','API','Storage','Payment','Excel'].map((s, i) => (
-            <div key={s} style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 0', borderBottom: `1px solid ${C.gray100}`, fontSize: 13 }}>
-              <span style={{ color: C.gray800 }}>{s}</span>
-              <span style={{ color: C.success, fontWeight: 600 }}>● OK</span>
-            </div>
-          ))}
-        </Card>
-      </div>
     </div>
-  );
+    );
+  };
 
-  const renderProducts = () => (
-    <div>
-      <h3 style={sectionTitle}>Product Management</h3>
-      <Card style={{ marginBottom: 20 }}>
-        <h4 style={cardTitle}>{editingProduct ? 'Edit Product' : 'Add Product'}</h4>
+  const renderProducts = () => {
+    const filteredProducts = products.filter(product => `${product.name} ${product.category}`.toLowerCase().includes(productSearch.toLowerCase()));
+    const edit = product => {
+      setEditingProduct(product.id);
+      setNewProduct({ ...emptyProduct, ...product });
+      setNewProductImage(null);
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    };
+    return <div className="bm-products-admin">
+      <div className="bm-products-heading"><div><h3 style={sectionTitle}>Product Management</h3><p>Manage the catalog customers can browse and order.</p></div></div>
+      <Card className="bm-product-editor" style={{ marginBottom: 20 }}>
+        <h4 style={cardTitle}>{editingProduct ? `Edit Product #${editingProduct}` : 'Add Product'}</h4>
         <form onSubmit={editingProduct ? handleProductEdit : handleProductSubmit}>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-            <Input label="Product Name" name="name" value={newProduct.name} onChange={v => setNewProduct(p => ({ ...p, name: v }))} required />
-            <Input label="Category" name="category" value={newProduct.category} onChange={v => setNewProduct(p => ({ ...p, category: v }))} required />
+          <div className="bm-product-form-grid">
+            <Input label="Product Name" value={newProduct.name} onChange={name => setNewProduct(p => ({ ...p, name }))} required />
+            <Input label="Category" value={newProduct.category} onChange={category => setNewProduct(p => ({ ...p, category }))} required />
+            <Input label="Price (PHP)" type="number" value={newProduct.price} onChange={price => setNewProduct(p => ({ ...p, price }))} required min="1" step="1" />
+            <Input label="Minimum Quantity" type="number" value={newProduct.minQty} onChange={minQty => setNewProduct(p => ({ ...p, minQty }))} required min="1" />
+            <Input label="Unit Label" value={newProduct.unit} onChange={unit => setNewProduct(p => ({ ...p, unit }))} required />
+            <Input label="Image Path or URL" value={newProduct.image} onChange={image => setNewProduct(p => ({ ...p, image }))} />
+            <label>Specification type<select value={newProduct.specificationType} onChange={e => setNewProduct(p => ({ ...p, specificationType: e.target.value }))}>{['general','clothing','hoodie','schoolId','banner','mug','sticker','backdrop'].map(value => <option key={value} value={value}>{value}</option>)}</select></label>
+            <label>Image fit<select value={newProduct.imageFit} onChange={e => setNewProduct(p => ({ ...p, imageFit: e.target.value }))}><option value="contain">Contain</option><option value="cover">Cover</option></select></label>
           </div>
-          <Input label="Description" name="description" value={newProduct.description} onChange={v => setNewProduct(p => ({ ...p, description: v }))} required />
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr', gap: 12 }}>
-            <Input label="Price" name="price" type="number" value={newProduct.price} onChange={v => setNewProduct(p => ({ ...p, price: v }))} required min="0" />
-            <Input label="Stock" name="stock" type="number" value={newProduct.stock} onChange={v => setNewProduct(p => ({ ...p, stock: v }))} required min="0" />
-            <Input label="Low Stock Threshold" name="lowStockThreshold" type="number" value={newProduct.lowStockThreshold} onChange={v => setNewProduct(p => ({ ...p, lowStockThreshold: v }))} required min="0" />
-            <div>
-              <label style={{ display: 'block', marginBottom: 6, fontSize: 12, color: C.gray600 }}>Status</label>
-              <select value={newProduct.status} onChange={e => setNewProduct(p => ({ ...p, status: e.target.value }))} style={{ width: '100%', padding: '10px', border: `1px solid ${C.gray200}`, borderRadius: 6, fontSize: 14 }}>
-                <option value="Active">Active</option>
-                <option value="Inactive">Inactive</option>
-              </select>
-            </div>
+          <label className="bm-product-description">Description<textarea required value={newProduct.description} onChange={e => setNewProduct(p => ({ ...p, description: e.target.value }))}/></label>
+          <div className="bm-product-flags">
+            <label><input type="checkbox" checked={newProduct.active} onChange={e => setNewProduct(p => ({ ...p, active: e.target.checked }))}/> Available to customers</label>
+            <label><input type="checkbox" checked={newProduct.popular} onChange={e => setNewProduct(p => ({ ...p, popular: e.target.checked }))}/> Featured as popular</label>
+            <label><input type="checkbox" checked={newProduct.trackStock} onChange={e => setNewProduct(p => ({ ...p, trackStock: e.target.checked }))}/> Track finished-product stock</label>
           </div>
-          {newProductImage && (
-            <div style={{ margin: '10px 0', display: 'flex', alignItems: 'center', gap: 10 }}>
-              <img src={newProductImage.base64} alt="" style={{ width: 60, height: 60, objectFit: 'contain', borderRadius: 4, border: `1px solid ${C.gray200}` }} />
-              <span style={{ fontSize: 12, color: C.gray600 }}>{newProductImage.originalName}</span>
-              <button type="button" onClick={() => { setNewProductImage(null); setNewProduct(p => ({ ...p, image: '' })); }} style={{ fontSize: 12, color: '#c62828', background: 'none', border: 'none', cursor: 'pointer' }}>Remove</button>
-            </div>
-          )}
-          <input type="file" name="image" accept=".jpg,.jpeg,.png,.webp" style={{ display: 'none' }} onChange={e => {
-            const file = e.target.files?.[0]; if (!file) return;
-            const reader = new FileReader(); reader.readAsDataURL(file);
-            reader.onload = () => { setNewProductImage({ base64: reader.result, originalName: file.name }); setNewProduct(p => ({ ...p, image: reader.result })); };
-          }} />
-          <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
-            <Btn type="submit" variant="primary">{editingProduct ? 'Save Changes' : 'Add Product'}</Btn>
-            <Btn variant="ghost" onClick={() => { setEditingProduct(null); setNewProduct({ name: '', category: '', description: '', price: '', stock: '', lowStockThreshold: '', status: 'Active', image: '' }); setNewProductImage(null); }}>
-              {editingProduct ? 'Cancel Edit' : 'Clear'}
-            </Btn>
-          </div>
+          {newProduct.trackStock && <div className="bm-product-form-grid bm-product-stock-fields"><Input label="Stock" type="number" value={newProduct.stock} onChange={stock => setNewProduct(p => ({ ...p, stock }))} min="0"/><Input label="Low Stock Threshold" type="number" value={newProduct.lowStockThreshold} onChange={lowStockThreshold => setNewProduct(p => ({ ...p, lowStockThreshold }))} min="0"/></div>}
+          <div className="bm-product-form-actions"><Btn type="submit" variant="primary">{editingProduct ? 'Save Changes' : 'Add Product'}</Btn><Btn variant="ghost" onClick={() => { setEditingProduct(null); setNewProduct(emptyProduct); setNewProductImage(null); }}>{editingProduct ? 'Cancel Edit' : 'Clear'}</Btn></div>
         </form>
       </Card>
-
-      <Card>
-        <h4 style={cardTitle}>Product List ({products.length})</h4>
-        <div style={{ overflowX: 'auto' }}>
-          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
-            <thead>
-              <tr style={{ borderBottom: `2px solid ${C.gray200}` }}>
-                {['Product','Category','Price','Stock','Threshold','Status','Actions'].map(h => (
-                  <th key={h} style={{ padding: '8px 10px', textAlign: 'left', color: C.gray600, fontWeight: 600 }}>{h}</th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {products.map(p => (
-                <tr key={p.id} style={{ borderBottom: `1px solid ${C.gray100}` }}>
-                  <td style={tdStyle}><div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>{p.image && <img src={p.image} alt="" style={{ width: 32, height: 32, borderRadius: 4, objectFit: 'contain' }} />}{p.name}</div></td>
-                  <td style={tdStyle}>{p.category}</td>
-                  <td style={tdStyle}>{fmt(p.price)}</td>
-                  <td style={tdStyle}><span style={{ color: p.stock <= p.lowStockThreshold ? '#c62828' : C.gray800 }}>{p.stock}</span></td>
-                  <td style={tdStyle}>{p.lowStockThreshold}</td>
-                  <td style={tdStyle}><Badge status={p.status || (p.active ? 'Active' : 'Inactive')} /></td>
-                  <td style={tdStyle}>
-                    <div style={{ display: 'flex', gap: 4 }}>
-                      <button onClick={() => handleStock(p.id, 'increase')} style={actionBtn}>+</button>
-                      <button onClick={() => handleStock(p.id, 'decrease')} style={actionBtn}>-</button>
-                      <button onClick={() => { setEditingProduct(p.id); setNewProduct({ name: p.name, category: p.category, description: p.description, price: p.price, stock: p.stock, lowStockThreshold: p.lowStockThreshold, status: p.status || 'Active', image: p.image || '' }); }} style={actionBtn}>Edit</button>
-                      <button onClick={() => handleDelete(p.id)} style={{ ...actionBtn, color: '#c62828' }}>Del</button>
-                    </div>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+      <Card className="bm-product-list-card">
+        <div className="bm-product-list-head"><div><h4 style={cardTitle}>Product List ({products.length})</h4><p>Inactive products remain visible here but are excluded from customer ordering.</p></div><input type="search" value={productSearch} onChange={e => setProductSearch(e.target.value)} placeholder="Search products" aria-label="Search managed products"/></div>
+        {productLoading ? <div className="bm-product-state">Loading products…</div> : productError ? <div className="bm-product-state is-error" role="alert">{productError}<button type="button" onClick={loadData}>Retry</button></div> : !products.length ? <div className="bm-product-state"><strong>No managed products yet.</strong><span>The seven legacy catalog products are ready for dry-run migration, pending approval.</span></div> : !filteredProducts.length ? <div className="bm-product-state">No products match this search.</div> : <div className="bm-product-table-wrap"><table><thead><tr>{['Product','Category','Price','Availability','Stock model','Actions'].map(h => <th key={h}>{h}</th>)}</tr></thead><tbody>{filteredProducts.map(product => <tr key={product.id}>
+          <td><div className="bm-product-identity">{product.image ? <img src={publicAsset(product.image)} alt=""/> : <span className="bm-product-placeholder" aria-hidden="true"/>}<div><strong>{product.name}</strong><small>#{product.id} · min. {product.minQty} {product.unit}</small></div></div></td>
+          <td>{product.category}</td><td><strong>{fmt(product.price)}</strong></td><td><Badge status={product.active ? 'Active' : 'Inactive'}/></td><td>{product.trackStock ? `${product.stock} available` : 'Made to order'}</td>
+          <td><div className="bm-product-row-actions"><button type="button" onClick={() => edit(product)}>Edit</button><button type="button" onClick={() => handleDelete(product.id)}>{product.active ? 'Deactivate' : 'Activate'}</button>{product.trackStock && <><button type="button" aria-label={`Increase ${product.name} stock`} onClick={() => handleStock(product.id, 'increase')}>+</button><button type="button" aria-label={`Decrease ${product.name} stock`} onClick={() => handleStock(product.id, 'decrease')}>−</button></>}</div></td>
+        </tr>)}</tbody></table></div>}
       </Card>
-    </div>
-  );
+    </div>;
+  };
 
   const renderInventory = () => (
     <div>
       <h3 style={sectionTitle}>Inventory Management</h3>
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 14, marginBottom: 24 }}>
         <StatCard label="Total Products" value={products.length} color={C.info} />
-        <StatCard label="In Stock" value={products.filter(p => p.stock > p.lowStockThreshold).length} color={C.success} />
+        <StatCard label="In Stock" value={products.filter(p => p.trackStock === true && p.stock > p.lowStockThreshold).length} color={C.success} />
         <StatCard label="Low Stock" value={lowStockProducts.length} color={C.warning} />
         <StatCard label="Out of Stock" value={products.filter(p => p.stock === 0).length} color="#c62828" />
       </div>
@@ -742,11 +793,11 @@ export default function AdminPanel({ user, showToast: notify }) {
   const renderProduction = () => (
     <div>
       <h3 style={sectionTitle}>Production Overview ({productions.length})</h3>
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(130px, 1fr))', gap: 12, marginBottom: 24 }}>
+      <div className="bm-production-summary">
         {['Queued','In Production','Quality Check','Ready','Completed','Delayed'].map(s => (
-          <Card key={s} style={{ padding: '12px 14px', textAlign: 'center' }}>
-            <div style={{ fontSize: 22, fontWeight: 800, fontFamily: 'Montserrat', color: ORDER_STATUS_COLORS[s]?.color || '#666' }}>{prodCounts[s] || 0}</div>
-            <div style={{ fontSize: 11, color: C.gray600 }}>{s}</div>
+          <Card className="bm-production-stat" key={s} style={{ '--production-color': ORDER_STATUS_COLORS[s]?.color || '#d8798a' }}>
+            <div className="bm-production-stat__value">{prodCounts[s] || 0}</div>
+            <div className="bm-production-stat__label">{s}</div>
           </Card>
         ))}
       </div>
@@ -766,7 +817,7 @@ export default function AdminPanel({ user, showToast: notify }) {
                   <td style={tdStyle}>{p.orderId}</td>
                   <td style={tdStyle}><Badge status={p.status} /></td>
                   <td style={tdStyle}>{p.priority || 'normal'}</td>
-                  <td style={tdStyle}>{p.assignedEmployee || '-'}</td>
+                  <td style={tdStyle}>{p.assignedEmployeeName || (p.assignedEmployee ? 'Unknown employee' : 'Unassigned')}</td>
                   <td style={tdStyle}>{p.productionNotes || p.delayReason || '-'}</td>
                   <td style={tdStyle}>{fmtDate(p.startTime)}</td>
                   <td style={tdStyle}>{fmtDate(p.actualCompletion)}</td>
@@ -780,45 +831,18 @@ export default function AdminPanel({ user, showToast: notify }) {
     </div>
   );
 
-  const renderCustomers = () => (
-    <div>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
-        <h3 style={sectionTitle}>Customers ({customers.length})</h3>
-        <input
-          placeholder="Search customers..."
-          value={searchQuery}
-          onChange={e => setSearchQuery(e.target.value)}
-          onKeyDown={e => { if (e.key === 'Enter') loadData(); }}
-          style={{ padding: '8px 12px', border: `1px solid ${C.gray200}`, borderRadius: 6, fontSize: 13, width: 220 }}
-        />
-      </div>
-      <Card>
-        <div style={{ overflowX: 'auto' }}>
-          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
-            <thead>
-              <tr style={{ borderBottom: `2px solid ${C.gray200}` }}>
-                {['Name','Email','Phone','Role','Joined'].map(h => (
-                  <th key={h} style={{ padding: '8px 10px', textAlign: 'left', color: C.gray600, fontWeight: 600 }}>{h}</th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {customers.map((c, i) => (
-                <tr key={i} style={{ borderBottom: `1px solid ${C.gray100}` }}>
-                  <td style={tdStyle}>{c.name}</td>
-                  <td style={tdStyle}>{c.email}</td>
-                  <td style={tdStyle}>{c.phone || '-'}</td>
-                  <td style={tdStyle}><Badge status={c.role || 'customer'} /></td>
-                  <td style={tdStyle}>{fmtDate(c.createdAt)}</td>
-                </tr>
-              ))}
-              {customers.length === 0 && <tr><td colSpan={5} style={{ padding: 20, textAlign: 'center', color: C.gray400 }}>No customers found. Try searching above.</td></tr>}
-            </tbody>
-          </table>
-        </div>
-      </Card>
+  const renderCustomers = () => <div className="bm-customer-directory">
+    <div className="bm-customer-directory__heading"><div><span>Accounts</span><h3>Customers ({customersLoading ? '…' : customers.length})</h3><p>Registered and authenticated customers linked by account ID.</p></div>
+      <div className="bm-customer-directory__tools"><input aria-label="Search customers" placeholder="Search name or email" value={searchQuery} onChange={e => setSearchQuery(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') loadData(); }}/><Btn variant="ghost" onClick={loadData}>Refresh</Btn></div>
     </div>
-  );
+    {customersWarning && <p className="bm-customer-directory__warning" role="status">{customersWarning}</p>}
+    {customersError && <div className="bm-product-state is-error" role="alert"><strong>Customer directory unavailable</strong><span>{customersError}</span><button type="button" onClick={loadData}>Retry</button></div>}
+    {!customersError && <Card><div className="bm-customer-directory__table"><table><thead><tr>{['Customer','Contact','Account type','Role','Joined','Orders','Status'].map(heading => <th key={heading}>{heading}</th>)}</tr></thead><tbody>
+      {customers.map(customer => <tr key={customer.id}><td><strong>{customer.name}</strong><small>{customer.id}</small></td><td><span>{customer.email || 'No email'}</span><small>{customer.phone || 'No phone recorded'}</small></td><td>{customer.accountType}</td><td><Badge status={customer.role || 'customer'} /></td><td>{fmtDate(customer.createdAt) || 'Not available'}</td><td>{customer.totalOrders}</td><td><span className={`bm-customer-status is-${String(customer.status || 'active').toLowerCase().replace(/\s+/g, '-')}`}>{customer.status || 'Active'}</span></td></tr>)}
+      {!customersLoading && customers.length === 0 && <tr><td className="bm-customer-directory__empty" colSpan={7}>{searchQuery ? 'No customers match this search.' : 'No registered or order-linked customers exist.'}</td></tr>}
+      {customersLoading && <tr><td className="bm-customer-directory__empty" colSpan={7}>Loading customer directory…</td></tr>}
+    </tbody></table></div></Card>}
+  </div>;
 
   const renderReports = () => (
     <div>
@@ -919,23 +943,19 @@ export default function AdminPanel({ user, showToast: notify }) {
   const renderSystem = () => (
     <div>
       <h3 style={sectionTitle}>System Status</h3>
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 14 }}>
+      <div className="bm-system-grid">
         {[
-          ['Database', systemHealth?.database || 'OK'],
-          ['API', systemHealth?.api || 'OK'],
-          ['Storage', systemHealth?.storage || 'OK'],
-          ['AI Service', systemHealth?.aiService || 'OK'],
-          ['Payment Service', systemHealth?.paymentService || 'OK'],
-          ['Excel Generator', systemHealth?.excelGenerator || 'OK'],
+          ['Database', systemHealth?.database],
+          ['API', systemHealth?.api],
+          ['Storage', systemHealth?.storage],
+          ['AI Service', systemHealth?.aiService],
+          ['Payment Service', systemHealth?.paymentService],
+          ['Excel Generator', systemHealth?.excelGenerator],
         ].map(([name, status]) => (
-          <Card key={name} style={{ padding: '16px 18px', textAlign: 'center' }}>
-            <div style={{ fontSize: 14, fontWeight: 700, color: C.gray800, marginBottom: 6 }}>{name}</div>
-            <span style={{
-              display: 'inline-block', padding: '4px 14px', borderRadius: 20, fontSize: 12, fontWeight: 700,
-              background: status === 'OK' ? C.successBg : '#fdecea',
-              color: status === 'OK' ? C.success : '#c62828'
-            }}>
-              {status === 'OK' ? '● Operational' : `● ${status}`}
+          <Card className="bm-system-card" key={name}>
+            <div className="bm-system-card__name">{name}</div>
+            <span className={`bm-system-status ${status === 'OK' ? 'is-ok' : status === 'Error' || status === 'Degraded' || status === 'disconnected' || status === 'Not configured' ? 'is-error' : status ? 'is-info' : 'is-loading'}`}>
+              <i aria-hidden="true" />{status === 'OK' ? 'Operational' : status || 'Checking…'}
             </span>
           </Card>
         ))}
@@ -946,18 +966,28 @@ export default function AdminPanel({ user, showToast: notify }) {
   if (user?.role !== 'admin') return <div style={{ padding: 24 }}><StaffOrders user={user} showToast={notify} /></div>;
 
   return (
-    <div style={{ display: 'flex', minHeight: 'calc(100vh - 70px)' }}>
-      <Sidebar tab={tab} setTab={setTab} sidebarOpen={sidebarOpen} />
-      <div className="bm-admin-surface" style={{ flex: 1, overflowY: 'auto' }}>
-        <div style={{ padding: '20px 28px' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 20 }}>
-            <button onClick={() => setSidebarOpen(!sidebarOpen)} style={{ background: 'none', border: 'none', fontSize: 20, cursor: 'pointer', color: C.gray600 }}>☰</button>
-            <h2 style={{ margin: 0, fontFamily: 'Montserrat', fontSize: 20, fontWeight: 800, color: C.gray800 }}>
+    <div className="bm-admin-shell">
+      {sidebarOpen && <button className="bm-admin-sidebar-backdrop" type="button" aria-label="Close navigation" onClick={() => setSidebarOpen(false)} />}
+      <Sidebar tab={tab} onNavigate={navigateAdmin} sidebarOpen={sidebarOpen} />
+      <div className="bm-admin-surface">
+        <header className="bm-admin-topbar">
+            <button className="bm-admin-menu" aria-label={sidebarOpen ? 'Close navigation' : 'Open navigation'} onClick={() => setSidebarOpen(!sidebarOpen)}><Icon name="menu" /></button>
+            <h2>
               {SIDEBAR_ITEMS.find(i => i.id === tab)?.label || 'Dashboard'}
             </h2>
-          </div>
+            <NotificationBell user={user} dark onNavigate={item => navigateAdmin(item.type === 'payment_submitted' ? 'payments' : item.relatedJobId ? 'jobs' : item.relatedOrderId ? 'orders' : 'dashboard')} />
+            <div className="bm-admin-account" ref={accountMenuRef}>
+              <button type="button" className="bm-admin-account-trigger" aria-haspopup="menu" aria-expanded={accountOpen} onClick={() => setAccountOpen(open => !open)} onKeyDown={event => { if (event.key === 'ArrowDown') { event.preventDefault(); setAccountOpen(true); requestAnimationFrame(() => accountMenuRef.current?.querySelector('[role=menuitem]')?.focus()); } }}>
+                <span className="bm-admin-avatar" aria-hidden="true">{user?.name?.[0] || user?.email?.[0] || 'A'}</span>
+                <span className="bm-admin-account-copy"><strong>{user?.name || 'Administrator'}</strong><small>Administrator</small></span>
+                <svg className="bm-admin-account-chevron" aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M6 9l6 6 6-6"/></svg>
+              </button>
+              {accountOpen&&<div className="bm-admin-account-menu" role="menu"><button type="button" role="menuitem" onClick={() => { setAccountOpen(false); onLogout(); }}><svg aria-hidden="true" width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M9 21H4V3h5M9 12h12m-4-4 4 4-4 4"/></svg>Logout</button></div>}
+            </div>
+        </header>
+        <main className="bm-admin-content">
           {renderTab()}
-        </div>
+        </main>
       </div>
     </div>
   );

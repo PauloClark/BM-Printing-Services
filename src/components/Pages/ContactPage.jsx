@@ -5,6 +5,8 @@ import { Input } from "../Common/Input";
 import { TurnstileWidget } from "../Common/TurnstileWidget";
 import { BM_CONTACT } from "../../constants/contact";
 import "./ContactPage.css";
+import { publicAsset } from '../../utils/assets';
+import { turnstileStatusMessage } from '../../utils/turnstile';
 
 // Turns a backend response into actionable copy. Without this, every failure
 // mode (server down, missing route, rate limit, rejected Turnstile, validation)
@@ -68,9 +70,7 @@ export const ContactPage = ({ showToast, user }) => {
     }
 
     if (!user && !turnstileToken) {
-      const message = turnstileStatus === "unavailable"
-        ? "Security verification is temporarily unavailable. Please try again."
-        : "Please complete the security verification.";
+      const message = turnstileStatusMessage(turnstileStatus);
       showToast(message, "error");
       return;
     }
@@ -196,21 +196,21 @@ export const ContactPage = ({ showToast, user }) => {
             <h2 id="bm-contact-info-title">Contact Information</h2>
             <div className="bm-contact-info-grid">
               <div className="bm-contact-info-item">
-                <span className="bm-contact-icon bm-contact-icon--phone"><img src="/icons/phone-icon.png" alt="" /></span>
+                <span className="bm-contact-icon bm-contact-icon--phone"><img src={publicAsset("icons/phone-icon.png")} alt="" /></span>
                 <div className="bm-contact-info-details">
                   <h3>Phone</h3>
                   <a href={BM_CONTACT.phoneHref}>{BM_CONTACT.phoneDisplay}</a>
                 </div>
               </div>
               <div className="bm-contact-info-item">
-                <span className="bm-contact-icon bm-contact-icon--email"><img src="/icons/gmail.webp" alt="" /></span>
+                <span className="bm-contact-icon bm-contact-icon--email"><img src={publicAsset("icons/gmail.webp")} alt="" /></span>
                 <div className="bm-contact-info-details">
                   <h3>Email</h3>
                   <a href={`mailto:${BM_CONTACT.email}`}>{BM_CONTACT.email}</a>
                 </div>
               </div>
               <div className="bm-contact-info-item">
-                <span className="bm-contact-icon bm-contact-icon--facebook"><img src="/icons/facebook.webp" alt="" /></span>
+                <span className="bm-contact-icon bm-contact-icon--facebook"><img src={publicAsset("icons/facebook.webp")} alt="" /></span>
                 <div className="bm-contact-info-details">
                   <h3>Facebook</h3>
                   <a href={BM_CONTACT.facebookUrl} target="_blank" rel="noreferrer">{BM_CONTACT.facebookLabel}</a>
@@ -218,7 +218,7 @@ export const ContactPage = ({ showToast, user }) => {
                 </div>
               </div>
               <div className="bm-contact-info-item">
-                <span className="bm-contact-icon bm-contact-icon--location"><img src="/icons/location-icon.png" alt="" /></span>
+                <span className="bm-contact-icon bm-contact-icon--location"><img src={publicAsset("icons/location-icon.png")} alt="" /></span>
                 <div className="bm-contact-info-details">
                   <h3>Location</h3>
                   <address>{BM_CONTACT.location}</address>

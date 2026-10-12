@@ -6,6 +6,7 @@ export const Modal = ({ open, onClose, title, children, width = 500 }) => {
 
   return (
     <div
+      className="bm-modal-backdrop"
       style={{
         position: "fixed",
         inset: 0,
@@ -19,8 +20,9 @@ export const Modal = ({ open, onClose, title, children, width = 500 }) => {
       onClick={e => e.target === e.currentTarget && onClose()}
     >
       <div
+        className="bm-modal-dialog"
         style={{
-          background: C.white,
+          background: `var(--bm-modal-background, ${C.white})`,
           borderRadius: 16,
           width: "100%",
           maxWidth: width,
@@ -30,6 +32,7 @@ export const Modal = ({ open, onClose, title, children, width = 500 }) => {
         }}
       >
         <div
+          className="bm-modal-header"
           style={{
             display: "flex",
             justifyContent: "space-between",
@@ -42,20 +45,32 @@ export const Modal = ({ open, onClose, title, children, width = 500 }) => {
             {title}
           </h3>
           <button
+            type="button"
+            className="bm-modal-close"
+            aria-label="Close dialog"
             onClick={onClose}
             style={{
-              background: "none",
-              border: "none",
-              fontSize: 22,
+              display: "inline-grid",
+              placeItems: "center",
+              flex: "0 0 auto",
+              width: 36,
+              height: 36,
+              padding: 0,
+              boxSizing: "border-box",
+              background: "var(--bm-modal-close-background, transparent)",
+              border: "1px solid var(--bm-modal-close-border, transparent)",
+              borderRadius: 8,
               cursor: "pointer",
-              color: C.gray400,
-              lineHeight: 1
+              color: `var(--bm-modal-close-color, ${C.gray400})`,
+              lineHeight: 0
             }}
           >
-            ✕
+            <svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round">
+              <path d="M6 6l12 12M18 6L6 18" />
+            </svg>
           </button>
         </div>
-        <div style={{ padding: "20px 24px" }}>{children}</div>
+        <div className="bm-modal-body" style={{ padding: "20px 24px" }}>{children}</div>
       </div>
     </div>
   );

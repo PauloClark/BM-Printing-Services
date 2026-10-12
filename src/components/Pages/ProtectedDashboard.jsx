@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { orderApi } from '../../utils/orderApi';
 import { canOpenDashboard } from '../../../shared/roles';
+import { StaffPasswordGate } from './StaffPasswordGate';
 
 export function ProtectedDashboard({ user, page, children }) {
   const [verified, setVerified] = useState(null);
@@ -27,5 +28,6 @@ export function ProtectedDashboard({ user, page, children }) {
   }, [user, page, retry]);
   if (error) return <div role="alert" style={{ padding: 40, textAlign: 'center' }}><p>{error}</p><button onClick={() => setRetry(n => n + 1)}>Retry access check</button></div>;
   if (!verified) return <p role="status" style={{ padding: 40 }}>Verifying dashboard access…</p>;
+  if (verified.role === 'staff' && verified.mustChangePassword) return <StaffPasswordGate user={verified} onChanged={() => setRetry(n => n + 1)} />;
   return children(verified);
 }

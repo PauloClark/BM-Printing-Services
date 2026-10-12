@@ -1,7 +1,7 @@
 import { supabaseAppUser } from '../../shared/roles.js';
 import { isOrderStaff } from '../../shared/orderWorkflow.js';
 import jwt from 'jsonwebtoken';
-import { User } from '../db.js';
+import { Employee, User } from '../db.js';
 
 const isProduction = process.env.NODE_ENV === 'production';
 
@@ -96,6 +96,13 @@ export const requireOrderAuth = async (req, res, next) => {
 
     req.user = supabaseAppUser(supabaseUser);
     req.authProvider = 'supabase';
+    if (req.user.role === 'staff') {
+      const employee = await Employee.findOne({ supabaseUserId: req.user.id }).select('active mustChangePassword permissions').lean();
+      req.user.employeeLinked = Boolean(employee);
+      req.user.employeeActive = Boolean(employee?.active);
+      req.user.employeeManaged = Boolean(employee) || Boolean(await Employee.exists({}));
+      req.user.mustChangePassword = Boolean(employee?.active && employee?.mustChangePassword);
+    }
     return next();
   } catch {
     return res.status(401).json({ error: 'Unable to verify customer session.' });
@@ -104,6 +111,23 @@ export const requireOrderAuth = async (req, res, next) => {
 
 export const requireOrderStaff = (req, res, next) => requireOrderAuth(req, res, () => {
   if (!isOrderStaff(req.user)) return res.status(403).json({ error: 'Staff or admin access required.' });
+  if (req.user.role === 'staff' && req.user.employeeManaged && !req.user.employeeActive) {
+    return res.status(403).json({ error: 'Your staff account is not linked to an active employee record.' });
+  }
+  if (req.user.role === 'staff' && req.user.mustChangePassword) return res.status(428).json({ code: 'PASSWORD_CHANGE_REQUIRED', error: 'Change your temporary password before using staff operations.' });
+  return next();
+});
+
+// Customer inquiries contain private correspondence. Every staff position may
+// manage them, but only through an active MongoDB employee record linked to the
+// authenticated Supabase identity. Admin access remains role-controlled.
+export const requireInquiryStaff = (req, res, next) => requireOrderAuth(req, res, () => {
+  if (req.user?.role === 'admin') return next();
+  if (req.user?.role !== 'staff') return res.status(403).json({ error: 'Staff or admin access required.' });
+  if (req.authProvider !== 'supabase' || !req.user.employeeLinked || !req.user.employeeActive) {
+    return res.status(403).json({ error: 'Customer inquiries require an active linked employee account.' });
+  }
+  if (req.user.mustChangePassword) return res.status(428).json({ code: 'PASSWORD_CHANGE_REQUIRED', error: 'Change your temporary password before using staff operations.' });
   return next();
 });
 // Invalid supplied credentials must never silently become a guest order.

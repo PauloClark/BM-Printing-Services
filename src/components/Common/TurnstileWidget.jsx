@@ -1,7 +1,10 @@
 import { useEffect, useRef } from 'react';
 
 const TURNSTILE_SCRIPT_URL = 'https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit';
-const TURNSTILE_SITE_KEY = import.meta.env.VITE_TURNSTILE_SITE_KEY || '';
+const TURNSTILE_DEVELOPMENT_SITE_KEY = '1x00000000000000000000AA';
+const TURNSTILE_SITE_KEY = import.meta.env.DEV && import.meta.env.VITE_TURNSTILE_USE_TEST_KEYS === 'true'
+  ? TURNSTILE_DEVELOPMENT_SITE_KEY
+  : import.meta.env.VITE_TURNSTILE_SITE_KEY || '';
 let turnstileScriptPromise;
 
 function loadTurnstileScript() {
@@ -51,9 +54,9 @@ export const TurnstileWidget = ({ resetSignal, onTokenChange, onStatusChange }) 
           callbacksRef.current.onTokenChange('');
           callbacksRef.current.onStatusChange('expired');
         },
-        'error-callback': () => {
+        'error-callback': errorCode => {
           callbacksRef.current.onTokenChange('');
-          callbacksRef.current.onStatusChange('unavailable');
+          callbacksRef.current.onStatusChange(String(errorCode).startsWith('110200') ? 'hostname-not-authorized' : 'unavailable');
         },
         'timeout-callback': () => {
           callbacksRef.current.onTokenChange('');

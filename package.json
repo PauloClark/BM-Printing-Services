@@ -2,6 +2,9 @@
   "name": "bm-printing-services",
   "version": "1.0.0",
   "type": "module",
+  "engines": {
+    "node": "24.x"
+  },
   "scripts": {
     "dev": "node scripts/dev.mjs",
     "preview": "vite preview",
@@ -10,6 +13,10 @@
     "test": "npx jest --config jest.config.cjs --forceExit --detectOpenHandles",
     "test:watch": "npx jest --config jest.config.cjs --watch --forceExit",
     "staff:assign": "node scripts/assign-supabase-role.mjs",
+    "catalog:migrate:dry-run": "node scripts/migrate-product-catalog.mjs",
+    "db:migrate:dry-run": "node scripts/migrate-mongodb-to-atlas.mjs",
+    "db:migrate:execute": "node scripts/migrate-mongodb-to-atlas.mjs --execute",
+    "validate:deployment-env": "node scripts/validate-deployment-env.mjs",
     "services:start": "node scripts/local-services.mjs",
     "dev:frontend": "vite"
   },
@@ -27,6 +34,7 @@
     "joi": "^18.2.6",
     "jsonwebtoken": "^9.0.3",
     "mongoose": "^8.6.3",
+    "mongodb": "^6.20.0",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
     "uuid": "^14.0.2"
@@ -34,7 +42,7 @@
   "devDependencies": {
     "@babel/core": "^8.0.6",
     "@babel/preset-env": "^8.0.6",
-    "@vitejs/plugin-react": "^4.0.0",
+    "@vitejs/plugin-react": "^6.1.2",
     "babel-jest": "^30.5.2",
     "jest": "^30.5.2",
     "mongodb-memory-server": "^11.2.0",

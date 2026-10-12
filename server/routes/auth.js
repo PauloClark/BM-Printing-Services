@@ -3,13 +3,15 @@ import { User } from '../db.js';
 import { generateToken, requireOrderAuth } from '../middleware/auth.js';
 import { userRegister, userLogin } from '../middleware/validate.js';
 import { safeText } from '../utils.js';
+import staffPasswordRoutes from './staffPassword.js';
 
 export default function authRoutes(app, authLimiter) {
   app.get('/api/auth/me', requireOrderAuth, (req, res) => {
     res.set('Cache-Control', 'no-store');
-    const { id, email, name, phone, address, avatar, role } = req.user;
-    res.json({ user: { id, email, name, phone, address, avatar, role, authProvider: req.authProvider } });
+    const { id, email, name, phone, address, avatar, role, mustChangePassword } = req.user;
+    res.json({ user: { id, email, name, phone, address, avatar, role, mustChangePassword: Boolean(mustChangePassword), authProvider: req.authProvider } });
   });
+  staffPasswordRoutes(app, authLimiter);
   app.patch('/api/auth/profile', requireOrderAuth, async (req, res) => {
     if (req.authProvider !== 'jwt') return res.status(400).json({ error: 'Update your profile using Supabase Auth.' });
     const { name, phone = '', address = '' } = req.body || {};
@@ -35,7 +37,12 @@ export default function authRoutes(app, authLimiter) {
     } catch { res.status(503).json({ error: 'Unable to update your password.' }); }
   });
   app.post('/api/auth/register', authLimiter, userRegister, async (req, res) => {
-    if (process.env.ALLOW_LEGACY_AUTH === 'false') return res.status(410).json({ error: 'Please register using Supabase on the Registration page.' });
+    // Customer registration is owned by Supabase. Keep the old MongoDB
+    // registration endpoint closed in production even while a legacy Admin
+    // login is temporarily retained during the Admin account migration.
+    if (process.env.ALLOW_LEGACY_REGISTRATION !== 'true' || process.env.NODE_ENV === 'production') {
+      return res.status(410).json({ error: 'Please register using Supabase on the Registration page.' });
+    }
     try {
       const body = req.body || {};
       const email = safeText(body.email).toLowerCase();

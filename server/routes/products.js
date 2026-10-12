@@ -3,148 +3,90 @@ import { requireAdmin } from '../middleware/auth.js';
 import { productCreate } from '../middleware/validate.js';
 import { safeText } from '../utils.js';
 
+const TEXT_FIELDS = ['name', 'description', 'category', 'image', 'unit', 'imageFit', 'specificationType'];
+const NUMBER_FIELDS = ['price', 'minQty', 'stock', 'lowStockThreshold'];
+const BOOLEAN_FIELDS = ['active', 'popular', 'trackStock'];
+
+const serializeProduct = product => {
+  const row = product.toObject ? product.toObject() : product;
+  return {
+    id: row.id, name: row.name, description: row.description || '', category: row.category || 'Printing',
+    price: Number(row.price), minQty: Number(row.minQty || 1), unit: row.unit || 'per piece', image: row.image || '',
+    imageFit: row.imageFit || 'contain', popular: Boolean(row.popular), active: Boolean(row.active),
+    trackStock: Boolean(row.trackStock), specificationType: row.specificationType || 'general',
+    stock: Number(row.stock || 0), lowStockThreshold: Number(row.lowStockThreshold || 0),
+    status: row.active ? 'Active' : 'Inactive'
+  };
+};
+
+const productUpdate = body => {
+  const update = {};
+  for (const field of TEXT_FIELDS) if (body[field] !== undefined) update[field] = safeText(body[field]);
+  for (const field of NUMBER_FIELDS) if (body[field] !== undefined) update[field] = Number(body[field]);
+  for (const field of BOOLEAN_FIELDS) if (body[field] !== undefined) update[field] = Boolean(body[field]);
+  return update;
+};
+
+const validUpdate = update => Number.isInteger(update.price ?? 1) && (update.price ?? 1) >= 1 &&
+  Number.isInteger(update.minQty ?? 1) && (update.minQty ?? 1) >= 1 &&
+  Number.isInteger(update.stock ?? 0) && (update.stock ?? 0) >= 0 &&
+  Number.isInteger(update.lowStockThreshold ?? 0) && (update.lowStockThreshold ?? 0) >= 0;
+
 export default function productRoutes(app) {
-  app.get('/api/products', async (req, res) => {
-    const products = await Product.find({ active: true }).sort({ id: 1 });
-    res.json({ products: products.map(product => ({
-      id: product.id,
-      name: product.name,
-      price: product.price,
-      image: product.image,
-      description: product.description,
-      minQty: product.minQty,
-      category: product.category,
-      stock: product.stock,
-      lowStockThreshold: product.lowStockThreshold,
-      status: product.stock <= 0 ? 'Out of Stock' : product.stock <= product.lowStockThreshold ? 'Low Stock' : 'In Stock'
-    })) });
+  app.get('/api/products', async (_req, res) => {
+    try {
+      const [products, catalogCount] = await Promise.all([
+        Product.find({ active: true }).sort({ id: 1 }).lean(), Product.countDocuments({})
+      ]);
+      res.set('Cache-Control', 'no-store');
+      res.json({ products: products.map(serializeProduct), catalogConfigured: catalogCount > 0 });
+    } catch { res.status(503).json({ error: 'Unable to load products.' }); }
+  });
+
+  app.get('/api/admin/products', requireAdmin, async (_req, res) => {
+    try {
+      const products = await Product.find({}).sort({ id: 1 }).lean();
+      res.set('Cache-Control', 'no-store');
+      res.json({ products: products.map(serializeProduct), catalogConfigured: products.length > 0 });
+    } catch { res.status(503).json({ error: 'Unable to load product management.' }); }
   });
 
   app.post('/api/products', requireAdmin, productCreate, async (req, res) => {
     try {
-      const { name, description, price, category, lowStockThreshold, status, stock, image } = req.body || {};
-      if (!name) return res.status(400).json({ error: 'Product name is required.' });
-
-      const maxProduct = await Product.findOne({}).sort({ id: -1 });
-      const nextId = (maxProduct?.id || 0) + 1;
-
-      const product = await Product.create({
-        id: nextId,
-        name,
-        price: Number(price || 0),
-        description: description || '',
-        category: category || 'Printing',
-        stock: stock !== undefined ? Number(stock) : 0,
-        lowStockThreshold: lowStockThreshold !== undefined ? Number(lowStockThreshold) : 10,
-        status: status || 'Active',
-        active: true,
-        image: image || ''
-      });
-
-      res.json({ success: true, product });
+      const update = productUpdate(req.body || {});
+      if (!update.name) return res.status(400).json({ error: 'Product name is required.' });
+      if (!validUpdate(update)) return res.status(400).json({ error: 'Product price must be a positive whole PHP amount and quantities must be whole numbers.' });
+      const maxProduct = await Product.findOne({}).sort({ id: -1 }).select('id').lean();
+      const product = await Product.create({ id: (maxProduct?.id || 0) + 1, ...update, active: update.active ?? true });
+      res.status(201).json({ success: true, product: serializeProduct(product) });
     } catch (error) {
-      console.error('Product create failed:', error);
+      if (error?.code === 11000) return res.status(409).json({ error: 'A product with this identifier already exists.' });
       res.status(500).json({ error: 'Unable to create product.' });
     }
   });
 
   app.patch('/api/products/:id', requireAdmin, async (req, res) => {
     try {
-      const productId = safeText(req.params.id);
-      const { name, description, price, category, lowStockThreshold, status, stock, image, active } = req.body || {};
-
-      const updateData = {};
-      if (name !== undefined) updateData.name = name;
-      if (description !== undefined) updateData.description = description;
-      if (price !== undefined) updateData.price = price;
-      if (category !== undefined) updateData.category = category;
-      if (lowStockThreshold !== undefined) updateData.lowStockThreshold = lowStockThreshold;
-      if (stock !== undefined) updateData.stock = stock;
-      if (image !== undefined) updateData.image = image;
-      if (active !== undefined) updateData.active = active;
-
-      let product = await Product.findOne({ id: Number(productId) });
-      if (product) {
-        await Product.updateOne({ id: Number(productId) }, updateData);
-        product = await Product.findOne({ id: Number(productId) });
-      } else {
-        product = await Product.create({
-          id: Number(productId),
-          name,
-          price: Number(price || 0),
-          description: description || '',
-          category: category || 'Printing',
-          stock: stock ? Number(stock) : 0,
-          lowStockThreshold: lowStockThreshold ? Number(lowStockThreshold) : 10,
-          active: true,
-          image: image || ''
-        });
-      }
-
-      res.json({ success: true, product });
-    } catch (error) {
-      console.error('Product edit failed:', error);
-      res.status(500).json({ error: 'Unable to edit product.' });
-    }
-  });
-
-  app.delete('/api/products/:id', requireAdmin, async (req, res) => {
-    try {
-      const productId = safeText(req.params.id);
-      const product = await Product.findOne({ id: Number(productId) });
+      const id = Number(safeText(req.params.id));
+      if (!Number.isInteger(id)) return res.status(400).json({ error: 'Invalid product ID.' });
+      const update = productUpdate(req.body || {});
+      if (!validUpdate(update)) return res.status(400).json({ error: 'Product price must be a positive whole PHP amount and quantities must be whole numbers.' });
+      const product = await Product.findOneAndUpdate({ id }, { $set: update }, { new: true, runValidators: true });
       if (!product) return res.status(404).json({ error: 'Product not found.' });
-      await Product.deleteOne({ id: Number(productId) });
-      res.json({ success: true, message: 'Product deleted.' });
-    } catch (error) {
-      console.error('Product delete failed:', error);
-      res.status(500).json({ error: 'Unable to delete product.' });
-    }
+      res.json({ success: true, product: serializeProduct(product) });
+    } catch { res.status(500).json({ error: 'Unable to edit product.' }); }
   });
 
-  app.patch('/api/products/:id/stock/increase', requireAdmin, async (req, res) => {
+  app.patch('/api/products/:id/stock/:direction', requireAdmin, async (req, res) => {
     try {
-      const productId = safeText(req.params.id);
-      const { amount } = req.body || { amount: 1 };
-
-      const product = await Product.findOne({ id: Number(productId) });
-      if (!product) {
-        return res.status(404).json({ error: 'Product not found.' });
-      }
-
-      const qty = Number(amount);
-      if (isNaN(qty) || qty <= 0) {
-        return res.status(400).json({ error: 'Amount must be a positive number.' });
-      }
-
-      product.stock += qty;
+      const product = await Product.findOne({ id: Number(req.params.id) });
+      if (!product) return res.status(404).json({ error: 'Product not found.' });
+      if (!product.trackStock) return res.status(409).json({ error: 'Stock tracking is disabled for this service.' });
+      const amount = req.params.direction === 'decrease' ? -1 : Number(req.body?.amount || 1);
+      if (!Number.isFinite(amount) || amount === 0 || !['increase', 'decrease'].includes(req.params.direction)) return res.status(400).json({ error: 'Invalid stock adjustment.' });
+      product.stock = Math.max(0, product.stock + amount);
       await product.save();
-
-      res.json({ success: true, product });
-    } catch (error) {
-      console.error('Stock increase failed:', error);
-      res.status(500).json({ error: 'Unable to increase stock.' });
-    }
-  });
-
-  app.patch('/api/products/:id/stock/decrease', requireAdmin, async (req, res) => {
-    try {
-      const productId = safeText(req.params.id);
-
-      const product = await Product.findOne({ id: Number(productId) });
-      if (!product) {
-        return res.status(404).json({ error: 'Product not found.' });
-      }
-
-      product.stock -= 1;
-      if (product.stock < 0) {
-        product.stock = 0;
-      }
-      await product.save();
-
-      res.json({ success: true, product });
-    } catch (error) {
-      console.error('Stock decrease failed:', error);
-      res.status(500).json({ error: 'Unable to decrease stock.' });
-    }
+      res.json({ success: true, product: serializeProduct(product) });
+    } catch { res.status(500).json({ error: 'Unable to adjust stock.' }); }
   });
 }

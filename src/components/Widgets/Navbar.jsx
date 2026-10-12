@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from "react";
 import { C } from "../../constants/colors";
 import { BMLogo } from "../Common/BMLogo";
 import { Btn } from "../Common/Btn";
+import { NotificationBell } from "../Common/NotificationBell";
 import "./Navbar.css";
 
 
@@ -202,6 +203,7 @@ export const Navbar = ({ page, setPage, user, onLogout }) => {
           ))}
           {user ? (
             <>
+              <NotificationBell user={user} onNavigate={item => navigate(item.targetPage || (isStaff ? 'staff' : 'myorders'))} />
               {isOrderStaff(user) && (
                 <button
                   type="button"

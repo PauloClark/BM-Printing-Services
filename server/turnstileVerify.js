@@ -6,6 +6,12 @@
 // server-side environment only and is never returned to the browser.
 
 export const TURNSTILE_SITEVERIFY_URL = 'https://challenges.cloudflare.com/turnstile/v0/siteverify';
+const TURNSTILE_DEVELOPMENT_SECRET = '1x0000000000000000000000000000000AA';
+const configuredSecret = () => process.env.NODE_ENV !== 'production' && process.env.TURNSTILE_USE_TEST_KEYS === 'true'
+  ? TURNSTILE_DEVELOPMENT_SECRET
+  : process.env.TURNSTILE_SECRET_KEY;
+const configuredHostnames = () => String(process.env.TURNSTILE_HOSTNAMES || '')
+  .split(',').map(hostname => hostname.trim().toLowerCase()).filter(Boolean);
 
 export async function verifyWithCloudflare(token, secret) {
   const response = await fetch(TURNSTILE_SITEVERIFY_URL, {
@@ -28,7 +34,7 @@ export async function verifyWithCloudflare(token, secret) {
 // Returns { ok: true } or { ok: false, status, message } with safe copy only.
 export async function verifyTurnstileServerToken(
   token,
-  { verifyToken = verifyWithCloudflare, secret = process.env.TURNSTILE_SECRET_KEY } = {}
+  { verifyToken = verifyWithCloudflare, secret = configuredSecret(), expectedHostnames = configuredHostnames() } = {}
 ) {
   const unavailable = { ok: false, status: 503, message: 'Security verification is temporarily unavailable. Please try again.' };
 
@@ -39,7 +45,13 @@ export async function verifyTurnstileServerToken(
 
   try {
     const result = await verifyToken(token.trim(), secret);
-    if (result?.success === true) return { ok: true };
+    if (result?.success === true) {
+      if (expectedHostnames.length && !expectedHostnames.includes(String(result.hostname || '').toLowerCase())) {
+        return { ok: false, status: 400, message: 'Security verification failed. Please try again.' };
+      }
+      if (process.env.NODE_ENV === 'production' && !expectedHostnames.length) return unavailable;
+      return { ok: true };
+    }
     return { ok: false, status: 400, message: 'Security verification failed. Please try again.' };
   } catch (error) {
     const status = Number.isInteger(error?.status) ? `HTTP ${error.status}` : 'HTTP unknown';

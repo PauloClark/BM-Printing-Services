@@ -5,6 +5,8 @@ import { HomeHero } from "./HomeHero";
 import { BMLogo } from "../Common/BMLogo";
 import { Card } from "../Common/Card";
 import "./HomePage.css";
+import { publicAsset } from '../../utils/assets';
+import { catalogSource } from '../../utils/catalogSource';
 
 // Home preview assets only; shared product records and other pages remain unchanged.
 const HOME_CUTOUTS = {
@@ -41,7 +43,7 @@ const shortDescription = description => {
 };
 
 export const HomePage = ({ setPage, reviews }) => {
-  const [products, setProducts] = useState(() => PRODUCTS.filter(product => !HIDDEN_PRODUCT_NAMES.has(product.name)));
+  const [products, setProducts] = useState([]);
   const [processVisible, setProcessVisible] = useState(false);
   const [processStatic, setProcessStatic] = useState(false);
   const processSectionRef = useRef(null);
@@ -71,8 +73,9 @@ export const HomePage = ({ setPage, reviews }) => {
     fetch("/api/products")
       .then(response => response.ok ? response.json() : null)
       .then(data => {
-        if (!active || !Array.isArray(data?.products) || data.products.length === 0) return;
-        const availableProducts = data.products
+        const source = catalogSource(data, PRODUCTS);
+        if (!active || !source) return;
+        const availableProducts = source
           .filter(product => !HIDDEN_PRODUCT_NAMES.has(product.name))
           .map(product => {
             const local = PRODUCTS.find(item => Number(item.id) === Number(product.id));
@@ -81,8 +84,8 @@ export const HomePage = ({ setPage, reviews }) => {
               ...product,
               id: product.id ?? local?.id,
               name: product.name,
-              image: local?.image || product.image || "",
-              imageFit: local?.imageFit || "contain",
+              image: product.image || "",
+              imageFit: product.imageFit || "contain",
               description: product.description || local?.description || ""
             };
           });
@@ -117,7 +120,7 @@ export const HomePage = ({ setPage, reviews }) => {
                     <article className="bm-home-service" key={product.id + '-' + index}>
                       <div className="bm-home-service__image">
                         {(HOME_CUTOUTS[product.id] || product.image) && <img
-                          src={HOME_CUTOUTS[product.id] ? '/image/hero/products/cutouts/' + HOME_CUTOUTS[product.id] : product.image}
+                          src={HOME_CUTOUTS[product.id] ? publicAsset('image/hero/products/cutouts/' + HOME_CUTOUTS[product.id]) : publicAsset(product.image)}
                           alt={copy === 0 ? product.name : ''} decoding="async" />}
                       </div>
                       <div className="bm-home-service__body">

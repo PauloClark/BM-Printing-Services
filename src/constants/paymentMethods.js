@@ -1,9 +1,11 @@
+import { publicAsset } from '../utils/assets.js';
+
 export const PAYMENT_METHODS = [
   {
     id: 'gcash',
     backendValue: 'GCash',
     name: 'GCash',
-    logo: '/icons/payments/gcash.png',
+    logo: publicAsset('icons/payments/gcash.png'),
     accountName: 'Paulo Jimenez',
     accountNumber: '09772730486'
   },
@@ -11,7 +13,7 @@ export const PAYMENT_METHODS = [
     id: 'maya',
     backendValue: 'Maya',
     name: 'Maya',
-    logo: '/icons/payments/maya.png',
+    logo: publicAsset('icons/payments/maya.png'),
     accountName: 'Paulo Jimenez',
     accountNumber: '09772730486'
   },
@@ -19,7 +21,7 @@ export const PAYMENT_METHODS = [
     id: 'bpi',
     backendValue: 'BPI',
     name: 'BPI',
-    logo: '/icons/payments/bpi.png',
+    logo: publicAsset('icons/payments/bpi.png'),
     accountName: 'Paulo Jimenez',
     accountNumber: '4069811648'
   },
@@ -27,7 +29,7 @@ export const PAYMENT_METHODS = [
     id: 'gotyme',
     backendValue: 'GoTyme',
     name: 'GoTyme Bank',
-    logo: '/icons/payments/gotyme.png',
+    logo: publicAsset('icons/payments/gotyme.png'),
     accountName: 'Paulo Jimenez',
     accountNumber: '0154 4507 7332'
   }

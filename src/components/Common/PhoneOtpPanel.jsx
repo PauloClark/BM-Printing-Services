@@ -1,6 +1,6 @@
 import { requestPhoneOtp, verifyPhoneOtp } from '../../utils/authActions';
 import { PHONE_OTP_ERRORS, PHONE_OTP_RESEND_SECONDS } from '../../utils/phoneAuth';
-import { TURNSTILE_ERRORS, verifyTurnstileToken } from '../../utils/turnstile';
+import { turnstileStatusMessage, verifyTurnstileToken } from '../../utils/turnstile';
 import { TurnstileWidget } from '../Common/TurnstileWidget';
 import React, { useEffect, useRef, useState } from 'react';
 
@@ -28,7 +28,7 @@ export const PhoneOtpPanel = ({ onAuthenticated, showToast }) => {
   // Reuses the existing server-side Turnstile check to limit OTP abuse.
   const guardTurnstile = async () => {
     if (!turnstileToken) {
-      throw new Error(turnstileStatus === 'unavailable' ? TURNSTILE_ERRORS.unavailable : TURNSTILE_ERRORS.missing);
+      throw new Error(turnstileStatusMessage(turnstileStatus));
     }
     try {
       await verifyTurnstileToken(turnstileToken);

@@ -1,7 +1,7 @@
+import './server/loadEnv.js';
 import phase3Routes from './server/routes/jobOrders.js';
 import orderArchiveRoutes from './server/routes/orderArchives.js';
 import { displayOrderStatus } from './shared/orderWorkflow.js';
-import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
@@ -11,7 +11,7 @@ import bcrypt from 'bcryptjs';
 import Joi from 'joi';
 import mongoose from 'mongoose';
 import { fileURLToPath } from 'url';
-import { connectMongo, seedCatalogAndAdmin, User, Product, Order, Inventory, Production, OrderFile, AuditLog, StockMovement } from './server/db.js';
+import { connectMongo, seedCatalogAndAdmin, User, Product, Order, Inventory, Production, OrderFile, AuditLog, StockMovement, Employee } from './server/db.js';
 import { generateDailyReport, getDefaultReportDate, getReportSummary, readReportFile, formatCurrency } from './server/reportService.js';
 import { generateToken, requireAuth, requireAdmin, optionalAuth, requireOrderStaff } from './server/middleware/auth.js';
 import { userRegister, userLogin, orderCreate, statusUpdate, orderIdParam, productCreate } from './server/middleware/validate.js';
@@ -25,20 +25,37 @@ import paymentRoutes from './server/routes/payments.js';
 import chatRoutes from './server/routes/chat.js';
 import turnstileRoutes from './server/routes/turnstile.js';
 import contactMessageRoutes from './server/routes/contactMessages.js';
+import employeeRoutes from './server/routes/employees.js';
+import notificationRoutes from './server/routes/notifications.js';
+import customerRoutes from './server/routes/customers.js';
 
 
 
 const app = express();
+// Vercel terminates HTTPS and supplies the client forwarding chain. Trust only
+// the nearest platform proxy so rate limiting uses the client address without
+// accepting an arbitrary multi-hop X-Forwarded-For value.
+if (process.env.VERCEL || process.env.NODE_ENV === 'production') app.set('trust proxy', 1);
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const FRONTEND_ORIGINS = ['http://localhost:3000', 'http://127.0.0.1:3000'];
+const FRONTEND_ORIGINS = (process.env.FRONTEND_ORIGINS || (process.env.NODE_ENV === 'production' ? '' : 'http://localhost:3000,http://127.0.0.1:3000'))
+  .split(',').map(origin => origin.trim()).filter(Boolean);
 
 app.use(express.json({ limit: '50mb' }));
-app.use(cors({ origin: FRONTEND_ORIGINS, credentials: true }));
+app.use(cors({
+  origin(origin, callback) {
+    if (!origin || FRONTEND_ORIGINS.includes(origin)) return callback(null, true);
+    return callback(Object.assign(new Error('Origin is not allowed by CORS.'), { status: 403 }));
+  },
+  credentials: true
+}));
 app.use(helmet({
   contentSecurityPolicy: false,
   crossOriginEmbedderPolicy: false,
   crossOriginResourcePolicy: { policy: 'cross-origin' }
 }));
+
+app.use('/api/security/test', (req, res, next) => process.env.NODE_ENV === 'production'
+  ? res.status(404).json({ error: 'Not found.' }) : next());
 
 function safeText(value) {
   return typeof value === 'string' ? value : '';
@@ -144,6 +161,9 @@ paymentRoutes(app);
 chatRoutes(app);
 turnstileRoutes(app);
 contactMessageRoutes(app);
+employeeRoutes(app);
+notificationRoutes(app);
+customerRoutes(app);
 phase3Routes(app);
 orderArchiveRoutes(app);
 orderFileRoutes(app, path.resolve(process.env.ORDER_UPLOAD_DIR || path.join(__dirname, 'uploads', 'orders')));
@@ -380,8 +400,16 @@ app.get('/api/production/:orderId', requireOrderStaff, async (req, res) => {
 
 app.get('/api/production', requireOrderStaff, async (req, res) => {
   try {
-    const productions = await Production.find(req.user.role === 'admin' ? {} : { $or: [{ phase3: { $ne: true } }, { assignedEmployee: req.user.id }] }).sort({ 'startTime': -1 });
-    res.json({ success: true, productions });
+    const productions = await Production.find(req.user.role === 'admin' ? {} : { $or: [{ phase3: { $ne: true } }, { assignedEmployee: req.user.id }] }).sort({ 'startTime': -1 }).lean();
+    const identityIds = [...new Set(productions.map(item => item.assignedEmployee).filter(Boolean))];
+    const linkedEmployees = identityIds.length
+      ? await Employee.find({ supabaseUserId: { $in: identityIds } }).select('name supabaseUserId').lean()
+      : [];
+    const employeeNames = new Map(linkedEmployees.map(employee => [employee.supabaseUserId, employee.name]));
+    res.json({ success: true, productions: productions.map(item => ({
+      ...item,
+      assignedEmployeeName: employeeNames.get(item.assignedEmployee) || item.assignedEmployeeName || (item.assignedEmployee ? 'Unknown employee' : 'Unassigned')
+    })) });
   } catch (error) {
     console.error('Failed to fetch production records:', error);
     res.status(500).json({ error: 'Unable to fetch production records.' });
@@ -451,6 +479,8 @@ app.get("/api/dashboard/summary", requireAdmin, async (req, res) => {
           productionQueue: 0,
           inProduction: 0,
           readyForPickup: 0,
+          paymentsAwaitingVerification: 0,
+          ordersOverTime: [],
           topServices: []
         }
       });
@@ -485,6 +515,19 @@ app.get("/api/dashboard/summary", requireAdmin, async (req, res) => {
       .slice(0, 5)
       .map(([name, count]) => ({ name, count }));
 
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const ordersOverTime = Array.from({ length: 7 }, (_, index) => {
+      const day = new Date(today);
+      day.setDate(today.getDate() - (6 - index));
+      const next = new Date(day);
+      next.setDate(day.getDate() + 1);
+      return {
+        date: day.toISOString().slice(0, 10),
+        count: orders.filter(order => order.createdAt >= day && order.createdAt < next).length
+      };
+    });
+
     res.json({
       success: true,
       data: {
@@ -497,6 +540,8 @@ app.get("/api/dashboard/summary", requireAdmin, async (req, res) => {
         productionQueue: productionCounts.pending,
         inProduction: productionCounts.inProduction,
         readyForPickup: productionCounts.ready,
+        paymentsAwaitingVerification: orders.filter(order => order.paymentStatus === 'For Verification').length,
+        ordersOverTime,
         topServices
       }
     });
@@ -566,7 +611,11 @@ app.get("/api/ai/daily-summary", requireAdmin, async (req, res) => {
 async function startServer() {
   try {
     await connectMongo();
-    await seedCatalogAndAdmin();
+    // Never create credentials merely by starting the application. Legacy
+    // development seeding is available only through an explicit opt-in.
+    if (process.env.SEED_DEFAULT_ADMIN === 'true' && process.env.NODE_ENV !== 'production') {
+      await seedCatalogAndAdmin();
+    }
     app.listen(process.env.PORT || 4000, () => {
       console.log(`BM Printing Services backend running on port ${process.env.PORT || 4000}`);
     });
@@ -693,20 +742,6 @@ app.delete('/api/files/:fileId', requireAdmin, async (req, res) => {
   } catch (error) {
     console.error('Failed to delete file:', error);
     res.status(500).json({ error: 'Unable to delete file.' });
-  }
-});
-
-app.post('/api/notifications/test', requireAdmin, async (req, res) => {
-  try {
-    const { userId, type, title, message } = req.body || {};
-    // In a real system, this would send via email, in-app, etc.
-    // For now, just log and confirm
-    console.log(`Notification [${type}]: ${title} - ${message}`);
-
-    res.json({ success: true, notification: { userId, type, title, message, sentAt: new Date() } });
-  } catch (error) {
-    console.error('Failed to send notification:', error);
-    res.status(500).json({ error: 'Unable to send notification.' });
   }
 });
 
@@ -869,8 +904,8 @@ app.get("/api/system/health", requireAdmin, async (req, res) => {
       database,
       api: 'OK',
       storage,
-      aiService: 'OK',
-      paymentService: 'Demo',
+      aiService: process.env.GEMINI_API_KEY ? 'Configured' : 'Not configured',
+      paymentService: 'Manual verification',
       excelGenerator,
       timestamp: new Date()
     };
@@ -979,72 +1014,6 @@ app.get("/api/search/orders", requireOrderStaff, async (req, res) => {
   } catch (error) {
     console.error('Search orders failed:', error);
     res.status(500).json({ success: false, error: 'Search failed.' });
-  }
-});
-
-app.get("/api/search/customers", requireAdmin, async (req, res) => {
-  try {
-    const { query } = req.query;
-    const filter = {};
-
-    if (query) {
-      const safe = escapeRegex(query);
-      filter.$or = [
-        { name: { $regex: safe, $options: 'i' } },
-        { email: { $regex: safe, $options: 'i' } },
-        { phone: { $regex: safe, $options: 'i' } }
-      ];
-    }
-
-    const customers = await User.find(filter).sort({ name: 1 });
-    res.json({ success: true, data: customers });
-  } catch (error) {
-    console.error('Search customers failed:', error);
-    res.status(500).json({ success: false, error: 'Search failed.' });
-  }
-});
-
-app.get("/api/employees", requireAdmin, async (req, res) => {
-  try {
-    const roles = ["admin", "manager", "cashier", "production", "customer"];
-    const employees = roles.map(function(role) {
-      return {
-        id: "emp-" + role,
-        role: role,
-        active: role !== "customer",
-        workload: Math.floor(Math.random() * 10),
-        completedJobs: Math.floor(Math.random() * 50)
-      };
-    });
-
-    res.json({ success: true, data: employees });
-  } catch (error) {
-    console.error("Failed to fetch employees:", error);
-    res.status(500).json({ success: false, error: "Failed to fetch employees." });
-  }
-});
-
-app.get("/api/employees/:role", requireAdmin, async (req, res) => {
-  try {
-    const role = req.params.role;
-    const validRoles = ["admin", "manager", "cashier", "production", "customer"];
-
-    if (validRoles.indexOf(role) === -1) {
-      return res.status(400).json({ success: false, error: "Invalid role." });
-    }
-
-    const employee = {
-      id: "emp-" + role,
-      role: role,
-      active: role !== "customer",
-      workload: Math.floor(Math.random() * 10),
-      completedJobs: Math.floor(Math.random() * 50)
-    };
-
-    res.json({ success: true, data: employee });
-  } catch (error) {
-    console.error("Failed to fetch employee:", error);
-    res.status(500).json({ success: false, error: "Failed to fetch employee." });
   }
 });
 
@@ -1458,4 +1427,13 @@ app.get("/api/security/permissions", requireAdmin, async (req, res) => {
   }
 });
 
-startServer();
+app.use((error, _req, res, next) => {
+  if (error?.status === 403 && error.message === 'Origin is not allowed by CORS.') {
+    return res.status(403).json({ error: 'Origin is not allowed.' });
+  }
+  return next(error);
+});
+
+export { app, startServer };
+
+if (!process.env.VERCEL) startServer();

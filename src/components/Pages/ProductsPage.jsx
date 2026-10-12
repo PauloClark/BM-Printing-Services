@@ -4,6 +4,8 @@ import { PRODUCTS } from "../../constants/products";
 
 import { Btn } from "../Common/Btn";
 import "./ProductsPage.css";
+import { publicAsset } from '../../utils/assets';
+import { catalogSource } from '../../utils/catalogSource';
 
 const REMOVED_PRODUCT_NAMES = new Set([
   "Tote Bag Printing",
@@ -18,6 +20,7 @@ export const ProductsPage = ({ setPage, setSelectedProduct }) => {
   const [search, setSearch] = useState("");
   const [dbProducts, setDbProducts] = useState([]);
   const [loadingProducts, setLoadingProducts] = useState(true);
+  const [productError, setProductError] = useState("");
 
   useEffect(() => {
     const fetchProducts = async () => {
@@ -25,41 +28,38 @@ export const ProductsPage = ({ setPage, setSelectedProduct }) => {
         const response = await fetch("/api/products");
         if (response.ok) {
           const data = await response.json();
-          if (data.products && data.products.length > 0) {
-            const merged = data.products.map(dp => {
+          const source = catalogSource(data, PRODUCTS);
+          if (source) {
+            const merged = source.map(dp => {
               const local = PRODUCTS.find(lp => lp.id === dp.id);
               return {
+                ...local,
+                ...dp,
                 id: dp.id,
                 name: dp.name,
-                price: local?.price ?? dp.price,
-                image: local?.image || dp.image || "",
-                imageFit: local?.imageFit || "contain",
+                price: Number(dp.price),
+                image: dp.image || "",
+                imageFit: dp.imageFit || "contain",
                 description: dp.description || local?.description || "",
-                minQty: dp.minQty || local?.minQty || 1,
+                minQty: dp.minQty || 1,
                 category: dp.category || local?.category || "Printing",
-                stock: dp.stock || 0,
-                lowStockThreshold: dp.lowStockThreshold || 10,
-                status: dp.status || "Active",
-                unit: local?.unit || "per piece",
-                popular: local?.popular || false
+                unit: dp.unit || "per piece"
               };
             });
             setDbProducts(merged);
-          } else {
-            setDbProducts(PRODUCTS);
           }
         } else {
-          setDbProducts(PRODUCTS);
+          setProductError("The product catalog is temporarily unavailable.");
         }
       } catch {
-        setDbProducts(PRODUCTS);
+        setProductError("The product catalog is temporarily unavailable.");
       }
       setLoadingProducts(false);
     };
     fetchProducts();
   }, []);
 
-  const displayProducts = (dbProducts.length > 0 ? dbProducts : PRODUCTS).filter(
+  const displayProducts = dbProducts.filter(
     product => !REMOVED_PRODUCT_NAMES.has(product.name)
   );
   const filtered = displayProducts.filter(
@@ -92,14 +92,14 @@ export const ProductsPage = ({ setPage, setSelectedProduct }) => {
           </div>
         </header>
         <div className="bm-catalog__results" role="status" aria-live="polite">
-          {loadingProducts ? 'Loading products...' : `${filtered.length} ${filtered.length === 1 ? 'product' : 'products'}${cat !== 'All' ? ' in ' + cat : ' to make your own'}`}
+          {loadingProducts ? 'Loading products...' : productError || `${filtered.length} ${filtered.length === 1 ? 'product' : 'products'}${cat !== 'All' ? ' in ' + cat : ' to make your own'}`}
         </div>
         <div className="bm-catalog__grid" aria-busy={loadingProducts}>
           {filtered.map(p => (
             <article key={p.id} className="bm-catalog__card">
               {p.popular && <span className="bm-catalog__popular">POPULAR</span>}
               <div className="bm-catalog__image">
-                {p.image && <img src={p.image} alt={p.name} loading="lazy" decoding="async" />}
+                {p.image && <img src={publicAsset(p.image)} alt={p.name} loading="lazy" decoding="async" />}
               </div>
               <div className="bm-catalog__content">
                 <p className="bm-catalog__category">{p.category}</p>
@@ -108,7 +108,7 @@ export const ProductsPage = ({ setPage, setSelectedProduct }) => {
                 <div className="bm-catalog__purchase">
                   <p className="bm-catalog__price">&#8369;{p.price.toLocaleString()}</p>
                   <p className="bm-catalog__unit">{p.unit || "per piece"} &middot; min. {p.minQty} pcs</p>
-                  {p.stock !== undefined && p.stock <= (p.lowStockThreshold || 10) && (
+                  {p.trackStock && p.stock <= (p.lowStockThreshold || 0) && (
                     <p className={`bm-catalog__stock${p.stock === 0 ? ' bm-catalog__stock--empty' : ''}`}>
                       {p.stock === 0 ? "Out of Stock" : `Low Stock: ${p.stock} left`}
                     </p>

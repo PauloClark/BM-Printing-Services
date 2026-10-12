@@ -9,6 +9,10 @@ const MAX_RECEIPT_SIZE = 10 * 1024 * 1024;
 const RECEIPT_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp']);
 const RECEIPT_EXTENSIONS = /\.(jpe?g|png|webp)$/i;
 const money = amount => `₱${Number(amount || 0).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+const toCentavos = value => {
+  const numeric = Number(value), scaled = numeric * 100, centavos = Math.round(scaled);
+  return Number.isFinite(numeric) && numeric > 0 && Number.isSafeInteger(centavos) && Math.abs(scaled - centavos) <= 1e-7 ? centavos : null;
+};
 
 const fileToDataUrl = file => new Promise((resolve, reject) => {
   const reader = new FileReader();
@@ -38,8 +42,9 @@ export function PaymentSubmissionModal({ order, user, onClose, onSubmitted, show
     const exactTotal = Number(order?.total || 0);
 
     if (!selectedMethod) return setError('Choose a payment method.');
-    if (!Number.isFinite(numericAmount) || numericAmount <= 0) return setError('Enter an amount greater than zero.');
-    if (Math.round(numericAmount * 100) !== Math.round(exactTotal * 100)) return setError('Amount paid must match the full order total exactly.');
+    const paymentCentavos = toCentavos(numericAmount), totalCentavos = toCentavos(exactTotal);
+    if (paymentCentavos === null) return setError('Enter a valid positive amount with no fractions smaller than one centavo.');
+    if (totalCentavos === null || paymentCentavos !== totalCentavos) return setError('Amount paid must match the full order total exactly. Partial payments and overpayments are not accepted.');
     if (!referenceNumber.trim()) return setError('Enter the payment reference number.');
     if (!receipt) return setError('Upload a payment receipt or proof of payment.');
     if (!RECEIPT_TYPES.has(receipt.type) || !RECEIPT_EXTENSIONS.test(receipt.name)) return setError('Choose a JPG, JPEG, PNG, or WEBP receipt.');
@@ -100,8 +105,8 @@ export function PaymentSubmissionModal({ order, user, onClose, onSubmitted, show
 
         <label className="bm-payment-field">
           <span>Amount Paid <b>*</b></span>
-          <input type="number" min="0.01" step="0.01" inputMode="decimal" value={amount} onChange={event => setAmount(event.target.value)} required />
-          <small>Enter the exact full amount. Total due: {money(order.total)}.</small>
+          <input type="number" min="0.01" step="0.01" inputMode="decimal" value={amount} readOnly aria-describedby="bm-full-payment-policy" required />
+          <small id="bm-full-payment-policy">Full amount due: {money(order.total)}. Partial payments and overpayments are not accepted.</small>
         </label>
         <label className="bm-payment-field">
           <span>Reference Number / Transfer Note <b>*</b></span>

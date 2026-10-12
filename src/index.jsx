@@ -2,7 +2,6 @@ import { orderApi, rememberGuestOrder } from './utils/orderApi';
 import { rememberOrderReturn, consumeAuthDestination } from './utils/authReturn';
 import { canOpenDashboard, dashboardForRole, supabaseAppUser } from '../shared/roles';
 import { ProtectedDashboard } from './components/Pages/ProtectedDashboard';
-import { StaffOrders } from './components/Pages/StaffOrders';
 import { useState, useEffect, useCallback, useRef } from "react";
 import { C } from "./constants/colors";
 import { globalStyles } from "./constants/styles";
@@ -18,7 +17,8 @@ import { ProfilePage } from "./components/Pages/ProfilePage";
 import { ContactPage } from "./components/Pages/ContactPage";
 import { LoginPage } from "./components/Pages/LoginPage";
 import { RegisterPage } from "./components/Pages/RegisterPage";
-import AdminPanel from "./components/Pages/AdminPanel";
+import { AdminLayout } from "./components/Pages/AdminLayout";
+import { StaffLayout } from './components/Pages/StaffLayout';
 import { Toast } from "./components/Common/Toast";
 import { Spinner } from "./components/Common/Spinner";
 import { BMLogo } from "./components/Common/BMLogo";
@@ -229,12 +229,14 @@ export default function App() {
       }}
     >
       <style>{globalStyles}</style>
-      <Navbar
-        page={renderedPage}
-        setPage={setPage}
-        user={user}
-        onLogout={handleLogout}
-      />
+      {!['staff', 'admin'].includes(renderedPage) && (
+        <Navbar
+          page={renderedPage}
+          setPage={setPage}
+          user={user}
+          onLogout={handleLogout}
+        />
+      )}
 
       {renderedPage === "home" && <HomePage setPage={setPage} reviews={reviews} />}
       {renderedPage === "products" && (
@@ -293,8 +295,8 @@ export default function App() {
       {['staff', 'admin'].includes(renderedPage) && (
         <ProtectedDashboard key={renderedPage} user={user} page={renderedPage}>
           {verifiedUser => renderedPage === 'admin'
-            ? <AdminPanel user={verifiedUser} showToast={showToast} />
-            : <div className="bm-staff-dashboard"><h1>Staff Dashboard</h1><StaffOrders user={verifiedUser} showToast={showToast} /></div>}
+            ? <AdminLayout user={verifiedUser} showToast={showToast} onLogout={handleLogout} />
+            : <StaffLayout user={verifiedUser} setUser={setUser} showToast={showToast} onLogout={handleLogout} />}
         </ProtectedDashboard>
       )}
 

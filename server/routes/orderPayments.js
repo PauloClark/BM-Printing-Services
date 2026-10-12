@@ -1,9 +1,12 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { Order } from '../db.js';
+import { AuditLog, Order } from '../db.js';
 import { requireAdmin, requireOrderAuth } from '../middleware/auth.js';
 import { safeText, serializeOrder, uploadDesignFile } from '../utils.js';
+import { requireDurableUploadStorage } from '../uploadStorage.js';
 import { isOrderStaff } from '../../shared/orderWorkflow.js';
+import { createNotification, notifyAdmins, safeNotify } from '../notificationService.js';
+import { paymentMatchesOrderTotal, toCentavos } from '../paymentAmounts.js';
 
 const customerOrderFilter = user => ({
   $or: [
@@ -32,7 +35,7 @@ const paymentSummary = payment => ({
 });
 
 export default function orderPaymentRoutes(app, uploadDirectory) {
-  app.post('/api/orders/:orderId/payments', requireOrderAuth, async (req, res) => {
+  app.post('/api/orders/:orderId/payments', requireOrderAuth, requireDurableUploadStorage, async (req, res) => {
     if (isOrderStaff(req.user)) return res.status(403).json({ error: 'Customer access is required to submit an order payment.' });
 
     const orderId = safeText(req.params.orderId).toUpperCase();
@@ -41,7 +44,7 @@ export default function orderPaymentRoutes(app, uploadDirectory) {
     const amount = Number(req.body?.amount);
     const receipt = req.body?.receipt;
     if (!['GCash', 'Maya', 'BPI', 'GoTyme'].includes(paymentMethod)) return res.status(400).json({ error: 'Choose a supported payment method.' });
-    if (!Number.isFinite(amount) || amount <= 0) return res.status(400).json({ error: 'Enter a valid amount greater than zero.' });
+    if (toCentavos(amount) === null) return res.status(400).json({ error: 'Enter a valid positive PHP amount with no fractions smaller than one centavo.' });
     if (!referenceNumber || referenceNumber.length > 100) return res.status(400).json({ error: 'Enter a reference number (up to 100 characters).' });
     const receiptExtension = path.extname(safeText(receipt?.filename)).toLowerCase();
     if (!receipt || !['.jpg', '.jpeg', '.png', '.webp'].includes(receiptExtension)) {
@@ -51,6 +54,10 @@ export default function orderPaymentRoutes(app, uploadDirectory) {
     try {
       const order = await Order.findOne({ orderId, ...customerOrderFilter(req.user) });
       if (!order) return res.status(404).json({ error: 'Order not found.' });
+      if (toCentavos(order.totalAmount) === null) return res.status(409).json({ error: 'This order total is invalid. Contact BM Printing Services before paying.' });
+      if (!paymentMatchesOrderTotal(amount, order.totalAmount)) {
+        return res.status(422).json({ error: 'Full payment is required. The submitted amount must exactly match the stored order total.' });
+      }
       if (['Cancelled', 'Completed'].includes(order.status)) return res.status(409).json({ error: 'Payment cannot be submitted for a finalized order.' });
       if (order.paymentStatus === 'Verified') return res.status(409).json({ error: 'This order payment is already verified.' });
       if (order.paymentStatus === 'For Verification') return res.status(409).json({ error: 'A payment is already waiting for verification.' });
@@ -89,6 +96,8 @@ export default function orderPaymentRoutes(app, uploadDirectory) {
         await fs.unlink(stored.filePath).catch(() => {});
         return res.status(409).json({ error: 'The order payment changed. Refresh My Orders and try again.' });
       }
+      const savedPayment = latestPayment(updated);
+      await safeNotify(() => notifyAdmins({ type: 'payment_submitted', title: 'Payment proof submitted', message: `Order ${orderId} has a payment awaiting verification.`, relatedOrderId: orderId, targetPage: 'admin', eventKey: `payment-submitted:${orderId}:${savedPayment._id}` }));
       return res.json({ order: serializeOrder(updated) });
     } catch (error) {
       console.error('Payment submission failed:', error);
@@ -110,6 +119,7 @@ export default function orderPaymentRoutes(app, uploadDirectory) {
           product: item.productName || '',
           quantity: item.quantity || 0,
           orderTotal: order.totalAmount,
+          amountMatchesOrderTotal: paymentMatchesOrderTotal(payment.amount, order.totalAmount),
           payment: paymentSummary(payment)
         };
       }).filter(Boolean);
@@ -136,6 +146,9 @@ export default function orderPaymentRoutes(app, uploadDirectory) {
       if (order.paymentStatus !== 'For Verification' || payment.status !== 'For Verification') {
         return res.status(409).json({ error: 'This payment is no longer waiting for verification.' });
       }
+      if (action === 'approve' && !paymentMatchesOrderTotal(payment.amount, order.totalAmount)) {
+        return res.status(409).json({ error: 'This payment cannot be verified because its amount does not exactly match the stored order total. Reject it and ask the customer to submit the full amount.' });
+      }
 
       const reviewedAt = new Date();
       const reviewFields = action === 'approve' ? {
@@ -155,11 +168,31 @@ export default function orderPaymentRoutes(app, uploadDirectory) {
         'paymentSubmissions.$.rejectionReason': rejectionReason
       };
       const updated = await Order.findOneAndUpdate(
-        { _id: order._id, paymentStatus: 'For Verification', status: { $nin: ['Cancelled', 'Completed'] }, 'paymentSubmissions._id': payment._id },
+        {
+          _id: order._id,
+          totalAmount: order.totalAmount,
+          paymentStatus: 'For Verification',
+          status: { $nin: ['Cancelled', 'Completed'] },
+          paymentSubmissions: { $elemMatch: { _id: payment._id, status: 'For Verification', amount: payment.amount } }
+        },
         { $set: reviewFields },
         { new: true, runValidators: true }
       );
       if (!updated) return res.status(409).json({ error: 'This payment was already reviewed. Refresh and try again.' });
+      await AuditLog.create({
+        userId: req.user.id, userName: req.user.name || req.user.email || '', role: req.user.role,
+        action: action === 'approve' ? 'VERIFY_PAYMENT' : 'REJECT_PAYMENT', module: 'Payments',
+        resourceType: 'Order', resourceId: orderId,
+        previousValue: { paymentStatus: 'For Verification', orderStatus: order.status },
+        newValue: { paymentStatus: updated.paymentStatus, orderStatus: updated.status }, timestamp: reviewedAt
+      });
+      if (updated.customerId) await safeNotify(() => createNotification({
+        recipientId: updated.customerId, recipientRole: 'customer',
+        type: action === 'approve' ? 'payment_verified' : 'payment_rejected',
+        title: action === 'approve' ? 'Payment verified' : 'Payment needs attention',
+        message: action === 'approve' ? `Payment for order ${orderId} was verified.` : `Payment for order ${orderId} was rejected: ${rejectionReason}`,
+        relatedOrderId: orderId, targetPage: 'myorders', eventKey: `payment-${action}:${orderId}:${paymentId}`
+      }));
       return res.json({ order: serializeOrder(updated), payment: paymentSummary(latestPayment(updated)) });
     } catch (error) {
       console.error('Payment review failed:', error);

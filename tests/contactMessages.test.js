@@ -1,7 +1,8 @@
 import request from 'supertest';
 import express from 'express';
 import { setupTestDB, teardownTestDB, clearTestDB } from './setup.js';
-import { ContactMessage } from '../server/db.js';
+import { ContactMessage, Employee, User } from '../server/db.js';
+import { generateToken } from '../server/middleware/auth.js';
 import contactMessageRoutes from '../server/routes/contactMessages.js';
 
 let app;
@@ -21,7 +22,13 @@ const users = {
   'customer-token': { id: 'customer-1', email: 'customer@example.com', app_metadata: {}, user_metadata: { full_name: 'Real Customer' } },
   'staff-token': { id: 'staff-1', email: 'staff@example.com', app_metadata: { role: 'staff' } },
   'admin-token': { id: 'admin-1', email: 'admin@example.com', app_metadata: { role: 'admin' } },
-  'forged-token': { id: 'forged-1', email: 'forged@example.com', user_metadata: { role: 'admin' } }
+  'forged-token': { id: 'forged-1', email: 'forged@example.com', user_metadata: { role: 'admin' } },
+  'manager-token': { id: 'staff-manager', email: 'manager@example.com', app_metadata: { role: 'staff' } },
+  'secretary-token': { id: 'staff-secretary', email: 'secretary@example.com', app_metadata: { role: 'staff' } },
+  'marketing-token': { id: 'staff-marketing', email: 'marketing@example.com', app_metadata: { role: 'staff' } },
+  'printing-token': { id: 'staff-printing', email: 'printing@example.com', app_metadata: { role: 'staff' } },
+  'layout-token': { id: 'staff-layout', email: 'layout@example.com', app_metadata: { role: 'staff' } },
+  'utility-token': { id: 'staff-utility', email: 'utility@example.com', app_metadata: { role: 'staff' } }
 };
 
 const validGuest = {
@@ -36,6 +43,7 @@ afterAll(async () => { await teardownTestDB(); });
 
 beforeEach(async () => {
   await clearTestDB();
+  await Employee.create({ name: 'Roland Sewing', email: 'staff@example.com', position: 'Sewing Worker', active: true, supabaseUserId: 'staff-1', permissions: ['view_assigned_jobs', 'update_job_progress'], createdBy: 'admin-1' });
   jest.clearAllMocks();
   originalFetch = global.fetch;
   originalUrl = process.env.SUPABASE_URL;
@@ -156,6 +164,40 @@ describe('Contact Us submissions', () => {
 });
 
 describe('Contact Us staff authorization', () => {
+  it('allows every active linked staff position to access inquiries', async () => {
+    const roster = [
+      ['manager-token', 'Manager', 'staff-manager', 'manager@example.com'],
+      ['secretary-token', 'Secretary', 'staff-secretary', 'secretary@example.com'],
+      ['marketing-token', 'Marketing', 'staff-marketing', 'marketing@example.com'],
+      ['staff-token', 'Sewing Worker', 'staff-1', 'staff@example.com'],
+      ['printing-token', 'Printing Worker', 'staff-printing', 'printing@example.com'],
+      ['layout-token', 'Layout Artist', 'staff-layout', 'layout@example.com'],
+      ['utility-token', 'Utility Worker', 'staff-utility', 'utility@example.com']
+    ];
+    await Employee.insertMany(roster.filter(([token]) => token !== 'staff-token').map(([, position, supabaseUserId, email]) => ({
+      name: `${position} Test`, email, position, active: true, supabaseUserId,
+      permissions: ['view_assigned_jobs', 'update_job_progress'], createdBy: 'admin-1'
+    })));
+
+    for (const [token] of roster) await authed(token, 'get', '/api/staff/messages').expect(200);
+  });
+
+  it('denies inactive, unlinked, and password-change-required staff', async () => {
+    await Employee.updateOne({ supabaseUserId: 'staff-1' }, { active: false });
+    await authed('staff-token', 'get', '/api/staff/messages').expect(403);
+
+    await Employee.updateOne({ supabaseUserId: 'staff-1' }, { active: true, mustChangePassword: true });
+    await authed('staff-token', 'get', '/api/staff/messages').expect(428);
+
+    await Employee.deleteOne({ supabaseUserId: 'staff-1' });
+    await authed('staff-token', 'get', '/api/staff/messages').expect(403);
+  });
+
+  it('denies legacy JWT staff even when a legacy staff record still exists', async () => {
+    const legacy = await User.create({ id: 'legacy-staff', name: 'Legacy Staff', email: 'legacy@example.com', role: 'staff' });
+    await authed(generateToken(legacy), 'get', '/api/staff/messages').expect(403);
+  });
+
   it('denies the message list, detail and status endpoints to guests and customers', async () => {
     const created = await submit({ ...validGuest, turnstileToken: 't' }).expect(201);
     const id = created.body.message.id;

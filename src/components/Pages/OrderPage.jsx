@@ -3,6 +3,8 @@ import { C } from "../../constants/colors";
 import { PRODUCTS } from "../../constants/products";
 import { PAYMENT_METHODS } from "../../constants/paymentMethods";
 import { orderApi } from "../../utils/orderApi";
+import { publicAsset } from "../../utils/assets";
+import { catalogSource } from "../../utils/catalogSource";
 import { generateId } from "../../utils/helpers";
 import { Card } from "../Common/Card";
 import { Btn } from "../Common/Btn";
@@ -124,6 +126,7 @@ const SPECIFICATION_CONFIG = {
 };
 
 const getSpecificationType = product => {
+  if (product?.specificationType && SPECIFICATION_CONFIG[product.specificationType]) return product.specificationType;
   const name = product?.name?.toLowerCase() || "";
   if (name.includes("school id")) return "schoolId";
   if (/hoodie|jacket/.test(name)) return "hoodie";
@@ -263,12 +266,7 @@ export const OrderPage = ({ user, selectedProduct, setPage, addOrder, showToast 
   }, [step]);
   const [fulfillmentMethod, setFulfillmentMethod] = useState("delivery");
   const [step1Errors, setStep1Errors] = useState({});
-  const [catalogProducts, setCatalogProducts] = useState(() => {
-    const fallbackProducts = PRODUCTS.filter(product => !REMOVED_PRODUCT_NAMES.has(product.name));
-    return selectedProduct && !REMOVED_PRODUCT_NAMES.has(selectedProduct.name)
-      ? [selectedProduct, ...fallbackProducts.filter(product => product.id !== selectedProduct.id)]
-      : fallbackProducts;
-  });
+  const [catalogProducts, setCatalogProducts] = useState([]);
   const [step2Attempted, setStep2Attempted] = useState(false);
   const [specificationErrors, setSpecificationErrors] = useState({});
   const [form, setForm] = useState({
@@ -311,9 +309,9 @@ export const OrderPage = ({ user, selectedProduct, setPage, addOrder, showToast 
         const response = await fetch("/api/products");
         if (!response.ok) return;
         const data = await response.json();
-        if (!Array.isArray(data.products) || data.products.length === 0) return;
-
-        const activeProducts = data.products
+        const source = catalogSource(data, PRODUCTS);
+        if (!source) return;
+        const activeProducts = source
           .filter(item => !REMOVED_PRODUCT_NAMES.has(item.name))
           .map(item => {
             const local = PRODUCTS.find(product => Number(product.id) === Number(item.id));
@@ -322,19 +320,17 @@ export const OrderPage = ({ user, selectedProduct, setPage, addOrder, showToast 
               ...item,
               id: item.id ?? local?.id,
               name: item.name,
-              price: Number(local?.price ?? item.price ?? 0),
-              minQty: 1,
+              price: Number(item.price ?? 0),
+              minQty: Number(item.minQty || 1),
               category: item.category || local?.category || "Printing",
-              unit: local?.unit || "per piece",
-              image: local?.image || (isProductImage(item.image) ? item.image : ""),
-              popular: local?.popular || false
+              unit: item.unit || "per piece",
+              image: item.image ? publicAsset(item.image) : "",
+              popular: Boolean(item.popular)
             };
           });
 
         if (!cancelled) setCatalogProducts(activeProducts);
-      } catch {
-        // Keep the local catalog available when the products API is offline.
-      }
+      } catch {}
     };
 
     loadActiveProducts();

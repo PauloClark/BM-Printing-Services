@@ -1,6 +1,6 @@
 import { ContactMessage } from '../db.js';
 import { contactMessage, contactMessageStatus } from '../middleware/validate.js';
-import { optionalOrderAuth, requireOrderStaff } from '../middleware/auth.js';
+import { optionalOrderAuth, requireInquiryStaff } from '../middleware/auth.js';
 import { safeText } from '../utils.js';
 import { verifyTurnstileServerToken, verifyWithCloudflare } from '../turnstileVerify.js';
 import rateLimit from 'express-rate-limit';
@@ -78,7 +78,7 @@ export default function contactMessageRoutes(app, { verifyToken = verifyWithClou
   });
 
   // ── STAFF/ADMIN ONLY ──────────────────────────────────────────────────────
-  app.get('/api/staff/messages', requireOrderStaff, async (req, res) => {
+  app.get('/api/staff/messages', requireInquiryStaff, async (req, res) => {
     res.set('Cache-Control', 'no-store');
     try {
       const messages = await ContactMessage.find({}).sort({ createdAt: -1 }).limit(500).lean();
@@ -91,7 +91,7 @@ export default function contactMessageRoutes(app, { verifyToken = verifyWithClou
     } catch { res.status(503).json({ error: 'Unable to load messages.' }); }
   });
 
-  app.get('/api/staff/messages/:id', requireOrderStaff, async (req, res) => {
+  app.get('/api/staff/messages/:id', requireInquiryStaff, async (req, res) => {
     res.set('Cache-Control', 'no-store');
     const id = safeText(req.params.id).slice(0, MAX_ID_LENGTH);
     try {
@@ -101,7 +101,7 @@ export default function contactMessageRoutes(app, { verifyToken = verifyWithClou
     } catch { res.status(503).json({ error: 'Unable to load this message.' }); }
   });
 
-  app.patch('/api/staff/messages/:id/status', requireOrderStaff, contactMessageStatus, async (req, res) => {
+  app.patch('/api/staff/messages/:id/status', requireInquiryStaff, contactMessageStatus, async (req, res) => {
     res.set('Cache-Control', 'no-store');
     const id = safeText(req.params.id).slice(0, MAX_ID_LENGTH);
     const status = safeText(req.body.status);

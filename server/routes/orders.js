@@ -1,10 +1,12 @@
 import { randomBytes, createHash } from 'node:crypto';
 import { isOrderStaff, ORDER_STATUSES } from '../../shared/orderWorkflow.js';
-import { Order, Production } from '../db.js';
+import { Order, Product, Production } from '../db.js';
 import { requireOrderAuth, requireAdmin, requireOrderStaff } from '../middleware/auth.js';
 import { orderCreate, orderIdParam, statusUpdate } from '../middleware/validate.js';
 import { safeText, serializeOrder, uploadDesignFile } from '../utils.js';
+import { requireDurableUploadStorage } from '../uploadStorage.js';
 import { generateDailyReport, getDefaultReportDate } from '../reportService.js';
+import { PRODUCT_CATALOG } from '../../shared/productCatalog.js';
 
 const orderOwnershipFilter = user => {
   if (isOrderStaff(user)) return {};
@@ -18,7 +20,7 @@ const orderOwnershipFilter = user => {
 
 const serializeCustomerOrder = async order => {
   const production = await Production.findOne({ phase3: true, orderId: order.orderId })
-    .select('jobOrderId status dateAssigned productionStartedAt productionCompletedAt readyForPickupAt reservedMaterials')
+    .select('jobOrderId status dateAssigned productionStartedAt productionCompletedAt readyForPickupAt reviewedAt reviewNotes productionHistory reservedMaterials')
     .lean();
   return {
     ...serializeOrder(order),
@@ -29,9 +31,27 @@ const serializeCustomerOrder = async order => {
       productionStartedAt: production.productionStartedAt,
       productionCompletedAt: production.productionCompletedAt,
       readyForPickupAt: production.readyForPickupAt,
+      reviewedAt: production.reviewedAt,
+      reviewNotes: production.reviewNotes || '',
+      productionHistory: production.productionHistory || [],
       reservedMaterials: production.reservedMaterials || []
     } : null
   };
+};
+
+const serializeAdminOrder = async order => {
+  const production = await Production.findOne({ phase3: true, orderId: order.orderId })
+    .select('jobOrderId status assignedEmployee assignedEmployeeName dateAssigned dueDate productionHistory')
+    .lean();
+  return { ...serializeOrder(order), production: production ? {
+    jobOrderId: production.jobOrderId,
+    status: production.status,
+    assignedEmployee: production.assignedEmployee,
+    assignedEmployeeName: production.assignedEmployeeName,
+    dateAssigned: production.dateAssigned,
+    dueDate: production.dueDate,
+    productionHistory: production.productionHistory || []
+  } : null };
 };
 
 const bindAuthenticatedEmail = (req, res, next) => {
@@ -53,8 +73,13 @@ const bindAuthenticatedEmail = (req, res, next) => {
 export default function orderRoutes(app) {
   app.get('/api/staff/orders', requireOrderStaff, async (req, res) => {
     try {
-      const orders = await Order.find({}).sort({ createdAt: -1 });
-      res.json({ orders: orders.map(serializeOrder) });
+      let filter = {};
+      if (req.user.role !== 'admin') {
+        const assignedOrderIds = await Production.distinct('orderId', { phase3: true, assignedEmployee: req.user.id });
+        filter = { orderId: { $in: assignedOrderIds } };
+      }
+      const orders = await Order.find(filter).sort({ createdAt: -1 });
+      res.json({ orders: req.user.role === 'admin' ? await Promise.all(orders.map(serializeAdminOrder)) : orders.map(serializeOrder) });
     } catch { res.status(503).json({ error: 'Unable to load orders. Please retry.' }); }
   });
   app.get('/api/guest/orders/:orderId', async (req, res) => {
@@ -104,7 +129,7 @@ export default function orderRoutes(app) {
     } catch { res.status(503).json({ error: 'Unable to load order.' }); }
   });
 
-  app.post('/api/orders', requireOrderAuth, bindAuthenticatedEmail, orderCreate, async (req, res) => {
+  app.post('/api/orders', requireOrderAuth, requireDurableUploadStorage, bindAuthenticatedEmail, orderCreate, async (req, res) => {
     try {
       const body = req.body || {};
       const customerName = safeText(body.customer || body.name || body.customerName);
@@ -115,16 +140,29 @@ export default function orderRoutes(app) {
       const notes = safeText(body.notes);
       const quantity = Number(body.quantity || 0);
       const productId = Number(body.productId);
-      const productName = safeText(body.product || body.productName);
-      const total = Number(body.total || 0);
       const designNotes = safeText(body.designNotes);
       const designFileData = body.designFile || null;
 
-      if (!customerName || !customerEmail || !contactNumber || !productName || !paymentMethod || !quantity || !productId) {
+      if (!customerName || !customerEmail || !contactNumber || !paymentMethod || !quantity || !productId) {
         return res.status(400).json({ error: 'Missing required order information.' });
       }
 
-      if (!Number.isFinite(total) || total < 0 || !Number.isInteger(productId)) return res.status(400).json({ error: 'Invalid order price or product.' });
+      if (!Number.isInteger(productId)) return res.status(400).json({ error: 'Invalid order product.' });
+      const storedProduct = await Product.findOne({ id: productId }).select('name price minQty active').lean();
+      if (storedProduct && !storedProduct.active) return res.status(400).json({ error: 'This product is no longer available.' });
+      // The static catalog is a legacy bootstrap only while the collection is
+      // wholly unconfigured. Once any record exists, MongoDB is authoritative.
+      const catalogConfigured = storedProduct ? true : Boolean(await Product.exists({}));
+      const product = storedProduct || (!catalogConfigured ? PRODUCT_CATALOG.find(item => item.id === productId) : null);
+      if (!product) return res.status(400).json({ error: 'This product is no longer available.' });
+      const unitPrice = Number(product.price);
+      const minQty = Number(product.minQty || 1);
+      if (!Number.isFinite(unitPrice) || unitPrice <= 0 || quantity < minQty) {
+        return res.status(400).json({ error: 'Invalid product price or quantity.' });
+      }
+      const total = unitPrice * quantity;
+      if (!Number.isFinite(total)) return res.status(400).json({ error: 'Invalid order total.' });
+      const productName = product.name;
       const orderId = (safeText(body.id || body.orderId) || `ORD-${randomBytes(8).toString('hex')}`).toUpperCase();
       if (!/^[A-Z0-9-]{1,50}$/.test(orderId)) return res.status(400).json({ error: 'Invalid order ID.' });
       const createdAt = new Date();
@@ -150,8 +188,8 @@ export default function orderRoutes(app) {
           productId,
           productName,
           quantity,
-          unitPrice: Number(body.unitPrice || body.price || 0),
-          subtotal: Number(body.subtotal || total)
+          unitPrice,
+          subtotal: total
         }],
         totalAmount: total,
         paymentMethod,
@@ -183,7 +221,7 @@ export default function orderRoutes(app) {
     }
   });
 
-  app.patch('/api/orders/:orderId/status', requireOrderStaff, orderIdParam, statusUpdate, async (req, res) => {
+  app.patch('/api/orders/:orderId/status', requireAdmin, orderIdParam, statusUpdate, async (req, res) => {
     try {
       const orderId = safeText(req.params.orderId).toUpperCase();
       const status = safeText(req.body?.status);
@@ -201,7 +239,16 @@ export default function orderRoutes(app) {
         return res.status(404).json({ error: 'Order not found.' });
       }
 
-      if (order.jobOrderId) return res.status(409).json({ error: 'This order has reserved materials and a Queueing job. Production changes are not part of Phase 3.' });
+      if (order.jobOrderId) return res.status(409).json({ error: 'Use the assigned Job Order workflow to update production status.' });
+      if (status === 'Confirmed' && order.paymentStatus !== 'Verified') {
+        return res.status(409).json({ error: 'Payment must be verified before confirming this order.' });
+      }
+      if (['Ready for Pickup', 'Picked Up', 'Completed'].includes(status) && order.paymentStatus !== 'Verified') {
+        return res.status(409).json({ error: 'Payment must be verified before pickup or completion.' });
+      }
+      if (['Confirmed', 'Processing', 'Ready for Pickup'].includes(order.status) && ['Processing', 'Ready for Pickup', 'Picked Up', 'Completed'].includes(status)) {
+        return res.status(409).json({ error: 'Assign and complete a Job Order before advancing production or pickup status.' });
+      }
       if (order.status === 'Completed' || order.status === 'Cancelled') {
         return res.status(400).json({ error: 'Cannot modify a finalized order.' });
       }

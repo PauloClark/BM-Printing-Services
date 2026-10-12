@@ -20,16 +20,43 @@ const userSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
+const employeeSchema = new mongoose.Schema({
+  name: { type: String, required: true, trim: true, maxlength: 120 },
+  email: { type: String, required: true, trim: true, lowercase: true, maxlength: 254 },
+  phone: { type: String, default: '', trim: true, maxlength: 30 },
+  position: { type: String, default: 'Production Staff', trim: true, maxlength: 100 },
+  active: { type: Boolean, default: true },
+  supabaseUserId: { type: String, default: null, trim: true },
+  mustChangePassword: { type: Boolean, default: false },
+  permissions: {
+    type: [{ type: String, enum: ['view_assigned_jobs', 'update_job_progress'] }],
+    default: ['view_assigned_jobs', 'update_job_progress']
+  },
+  createdBy: { type: String, required: true }
+}, { timestamps: true });
+employeeSchema.index({ email: 1 }, { unique: true });
+employeeSchema.index({ supabaseUserId: 1 }, { unique: true, sparse: true });
+
 const productSchema = new mongoose.Schema(
   {
     id: { type: Number, required: true, unique: true },
     name: { type: String, required: true },
-    price: { type: Number, required: true },
+    price: {
+      type: Number,
+      required: true,
+      min: 1,
+      validate: { validator: Number.isInteger, message: 'Price must be a whole PHP amount.' }
+    },
     image: { type: String, default: '' },
     description: { type: String, default: '' },
     minQty: { type: Number, default: 1 },
+    unit: { type: String, default: 'per piece', trim: true, maxlength: 40 },
     category: { type: String, default: 'Printing' },
     active: { type: Boolean, default: true },
+    imageFit: { type: String, enum: ['contain', 'cover'], default: 'contain' },
+    popular: { type: Boolean, default: false },
+    trackStock: { type: Boolean, default: false },
+    specificationType: { type: String, enum: ['clothing', 'hoodie', 'schoolId', 'banner', 'mug', 'sticker', 'backdrop', 'general'], default: 'general' },
     stock: { type: Number, default: 0 },
     lowStockThreshold: { type: Number, default: 10 }
   },
@@ -59,6 +86,15 @@ const productionSchema = new mongoose.Schema(
     assignedEmployeeName: { type: String },
     dateAssigned: { type: Date },
     assignedBy: { type: String },
+    assignedByName: { type: String, default: '' },
+    jobInstructions: { type: String, default: '', maxlength: 2000 },
+    dueDate: { type: Date, default: null },
+    acknowledgedAt: { type: Date, default: null },
+    acknowledgedBy: { type: String, default: '' },
+    submittedForReviewAt: { type: Date, default: null },
+    reviewedAt: { type: Date, default: null },
+    reviewedBy: { type: String, default: '' },
+    reviewNotes: { type: String, default: '', maxlength: 2000 },
     productionStartedAt: { type: Date, default: null },
     productionStartedBy: { type: String, default: '' },
     productionCompletedAt: { type: Date, default: null },
@@ -73,9 +109,9 @@ const productionSchema = new mongoose.Schema(
       reservationStatus: { type: String, enum: ['reserved', 'consumed', 'released'], default: 'reserved' }
     }],
     orderId: { type: String, required: true },
-    status: { type: String, enum: ['Queueing', 'In Progress', 'Ready for Pickup', 'Pending', 'Queued', 'In Production', 'Quality Check', 'Ready', 'Completed', 'Delayed', 'Cancelled'], default: 'Pending' },
+    status: { type: String, enum: ['Assigned', 'Acknowledged', 'In Progress', 'Submitted for Review', 'Correction Required', 'Approved', 'Ready for Pickup', 'Queueing', 'Pending', 'Queued', 'In Production', 'Quality Check', 'Ready', 'Completed', 'Delayed', 'Cancelled'], default: 'Pending' },
     assignedEmployee: { type: String, default: '' },
-    priority: { type: String, default: 'normal' },
+    priority: { type: String, enum: ['low', 'normal', 'high', 'urgent'], default: 'normal' },
     startTime: { type: Date, default: null },
     estimatedCompletion: { type: Date, default: null },
     actualCompletion: { type: Date, default: null },
@@ -113,7 +149,15 @@ const orderItemSchema = new mongoose.Schema(
 const paymentSubmissionSchema = new mongoose.Schema({
   customerId: { type: String, required: true },
   paymentMethod: { type: String, enum: ['GCash', 'Maya', 'BPI', 'GoTyme'], required: true },
-  amount: { type: Number, required: true, min: 0.01 },
+  amount: {
+    type: Number,
+    required: true,
+    min: 0.01,
+    validate: {
+      validator: value => Number.isFinite(value) && Math.abs(value * 100 - Math.round(value * 100)) <= 1e-7,
+      message: 'Payment amount cannot contain fractions smaller than one centavo.'
+    }
+  },
   referenceNumber: { type: String, required: true, trim: true, maxlength: 100 },
   receiptFileName: { type: String, required: true },
   receiptFilePath: { type: String, required: true },
@@ -224,6 +268,21 @@ const auditLogSchema = new mongoose.Schema(
   },
   { timestamps: true }
 );
+
+const notificationSchema = new mongoose.Schema({
+  recipientId: { type: String, required: true, index: true },
+  recipientRole: { type: String, enum: ['customer', 'admin', 'staff'], required: true },
+  type: { type: String, required: true, maxlength: 80 },
+  title: { type: String, required: true, maxlength: 160 },
+  message: { type: String, required: true, maxlength: 1000 },
+  relatedOrderId: { type: String, default: '', maxlength: 80 },
+  relatedJobId: { type: String, default: '', maxlength: 80 },
+  targetPage: { type: String, enum: ['', 'myorders', 'admin', 'staff'], default: '' },
+  eventKey: { type: String, required: true, unique: true, maxlength: 240 },
+  read: { type: Boolean, default: false, index: true },
+  readAt: { type: Date, default: null }
+}, { timestamps: true });
+notificationSchema.index({ recipientId: 1, createdAt: -1 });
 
 const stockMovementSchema = new mongoose.Schema(
   {
@@ -366,23 +425,36 @@ const OrderFile = mongoose.model('OrderFile', orderFileSchema);
 const AuditLog = mongoose.model('AuditLog', auditLogSchema);
 const StockMovement = mongoose.model('StockMovement', stockMovementSchema);
 const ContactMessage = mongoose.model('ContactMessage', contactMessageSchema);
+const Employee = mongoose.model('Employee', employeeSchema);
+const Notification = mongoose.model('Notification', notificationSchema);
+
+let mongoConnectionPromise;
 
 export async function connectMongo() {
+  if (mongoose.connection.readyState === 1) return mongoose.connection;
+  if (mongoConnectionPromise) return mongoConnectionPromise;
   const uri = process.env.MONGODB_URI || 'mongodb://127.0.0.1:27017/bmprinting';
-
-  try {
-    await mongoose.connect(uri);
-    console.log('Connected to MongoDB.');
-    return;
-  } catch (error) {
-    if (process.env.ALLOW_IN_MEMORY_DB !== 'true' || process.env.NODE_ENV === 'production') throw error;
-    console.warn('Using explicitly enabled temporary development database. Orders will not survive a restart.');
+  if (process.env.NODE_ENV === 'production' && !process.env.MONGODB_URI) {
+    throw new Error('MONGODB_URI is required in production. Configure an Atlas replica-set connection string.');
   }
-
-  const memoryServer = await MongoMemoryServer.create();
-  const memoryUri = memoryServer.getUri();
-  await mongoose.connect(memoryUri);
-  console.log('Connected to in-memory MongoDB:', memoryUri);
+  mongoConnectionPromise = (async () => {
+    try {
+      await mongoose.connect(uri, {
+        maxPoolSize: Number(process.env.MONGODB_MAX_POOL_SIZE || 10),
+        serverSelectionTimeoutMS: Number(process.env.MONGODB_SERVER_SELECTION_TIMEOUT_MS || 10000)
+      });
+      console.log('Connected to MongoDB.');
+      return mongoose.connection;
+    } catch (error) {
+      if (process.env.ALLOW_IN_MEMORY_DB !== 'true' || process.env.NODE_ENV === 'production') throw error;
+      console.warn('Using explicitly enabled temporary development database. Orders will not survive a restart.');
+      const memoryServer = await MongoMemoryServer.create();
+      await mongoose.connect(memoryServer.getUri());
+      console.log('Connected to an explicitly enabled temporary development database.');
+      return mongoose.connection;
+    }
+  })().catch(error => { mongoConnectionPromise = undefined; throw error; });
+  return mongoConnectionPromise;
 }
 
 export async function seedCatalogAndAdmin() {
@@ -405,4 +477,4 @@ export async function seedCatalogAndAdmin() {
   }
 }
 
-export { User, Product, Order, Inventory, Production, OrderFile, AuditLog, StockMovement, ContactMessage, DEFAULT_ADMIN_EMAIL, DEFAULT_ADMIN_PASSWORD };
+export { User, Employee, Product, Order, Inventory, Production, OrderFile, AuditLog, Notification, StockMovement, ContactMessage, DEFAULT_ADMIN_EMAIL, DEFAULT_ADMIN_PASSWORD };

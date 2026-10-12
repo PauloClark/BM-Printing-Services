@@ -40,7 +40,8 @@ const sameId = (left, right) => String(left) === String(right);
 
 function hasFinalizedInventory(job, movements) {
   const materials = job.reservedMaterials || [];
-  if (!materials.length || materials.some(material => material.reservationStatus !== 'consumed')) return false;
+  if (!materials.length) return movements.length === 0;
+  if (materials.some(material => material.reservationStatus !== 'consumed')) return false;
   if (movements.length !== materials.length) return false;
   return materials.every(material => {
     const matching = movements.filter(movement => sameId(movement.inventoryId, material.inventoryId));

@@ -40,6 +40,10 @@ export function AdminPayments({ user, showToast }) {
       setError('Enter a rejection reason for the customer.');
       return;
     }
+    if (action === 'approve' && !selected.amountMatchesOrderTotal) {
+      setError('This payment cannot be verified because the submitted amount does not match the stored order total. Reject it with a reason.');
+      return;
+    }
     setBusy(true);
     setError('');
     try {
@@ -105,7 +109,7 @@ export function AdminPayments({ user, showToast }) {
                   <td>{item.customerName}</td>
                   <td>{item.product} · {item.quantity} pcs</td>
                   <td>{money(item.orderTotal)}</td>
-                  <td>{money(item.payment.amount)}</td>
+                  <td>{money(item.payment.amount)} <span className={`bm-payment-match ${item.amountMatchesOrderTotal ? 'is-match' : 'is-mismatch'}`}>{item.amountMatchesOrderTotal ? 'Matches' : 'Mismatch'}</span></td>
                   <td>{item.payment.paymentMethod}</td>
                   <td>{item.payment.referenceNumber}</td>
                   <td>{date(item.payment.submittedAt)}</td>
@@ -139,6 +143,7 @@ export function AdminPayments({ user, showToast }) {
               <div><dt>Reference Number</dt><dd>{selected.payment.referenceNumber}</dd></div>
               <div><dt>Submitted Date</dt><dd>{date(selected.payment.submittedAt)}</dd></div>
               <div><dt>Payment Status</dt><dd>{selected.payment.status}</dd></div>
+              <div><dt>Amount Check</dt><dd><span className={`bm-payment-match ${selected.amountMatchesOrderTotal ? 'is-match' : 'is-mismatch'}`}>{selected.amountMatchesOrderTotal ? 'Matches order total' : 'Does not match order total'}</span></dd></div>
               <div><dt>Receipt</dt><dd>{selected.payment.receiptOriginalName}</dd></div>
             </dl>
             <Btn variant="secondary" disabled={receiptBusy} loading={receiptBusy} onClick={openReceipt}>View Receipt</Btn>
@@ -148,10 +153,11 @@ export function AdminPayments({ user, showToast }) {
             <span>Rejection Reason</span>
             <textarea value={rejectionReason} maxLength={500} onChange={event => setRejectionReason(event.target.value)} placeholder="Explain what the customer should correct before resubmitting." />
           </label>
+          {!selected.amountMatchesOrderTotal && <p className="bm-payment-error" role="alert">Verification is blocked. Full payment must exactly match the stored order total. You may reject this proof and explain the correction required.</p>}
           {error && <p className="bm-payment-error" role="alert">{error}</p>}
           <div className="bm-admin-payment-review__actions">
             <Btn variant="danger" disabled={busy} loading={busy} onClick={() => review('reject')}>Reject Payment</Btn>
-            <div><Btn variant="ghost" disabled={busy} onClick={() => setSelected(null)}>Close</Btn><Btn variant="success" disabled={busy} loading={busy} onClick={() => review('approve')}>Confirm Payment</Btn></div>
+            <div><Btn variant="ghost" disabled={busy} onClick={() => setSelected(null)}>Close</Btn><Btn variant="success" disabled={busy || !selected.amountMatchesOrderTotal} loading={busy} onClick={() => review('approve')}>Verify Payment</Btn></div>
           </div>
         </div>}
       </Modal>

@@ -1,229 +1,81 @@
 import request from 'supertest';
-import { setupTestDB, teardownTestDB, clearTestDB, seedTestAdmin, seedTestProduct, generateAdminToken } from './setup.js';
+import express from 'express';
+import { setupTestDB, teardownTestDB, clearTestDB, seedTestAdmin, generateAdminToken } from './setup.js';
+import { Product } from '../server/db.js';
+import productRoutes from '../server/routes/products.js';
+import { previewCatalogMigration } from '../server/catalogMigration.js';
 
-let app;
-let adminToken;
-let ProductModel;
+jest.mock('../server/utils.js', () => ({ safeText: value => typeof value === 'string' ? value : '' }));
+
+let app, adminToken;
+const auth = () => ({ Authorization: `Bearer ${adminToken}` });
+const baseProduct = { id: 1, name: 'Custom T-Shirt Printing', description: 'Printed shirt', category: 'Clothing & Apparel', price: 400, minQty: 1, unit: 'per piece', image: 'image/tshirt.png', active: true, trackStock: false, specificationType: 'clothing' };
 
 beforeAll(async () => {
   await setupTestDB();
-  const express = (await import('express')).default;
-  const cors = (await import('cors')).default;
-  const mongoose = (await import('mongoose')).default;
-  const { Product } = await import('../server/db.js');
-  ProductModel = Product;
-  const { requireAuth, requireAdmin } = await import('../server/middleware/auth.js');
-
-  app = express();
-  app.use(express.json({ limit: '50mb' }));
-  app.use(cors());
-
-  app.get('/api/products', async (req, res) => {
-    const products = await Product.find({ active: true }).sort({ id: 1 });
-    res.json({ products });
-  });
-
-  app.post('/api/products', requireAdmin, async (req, res) => {
-    try {
-      const { name, description, price, category, lowStockThreshold, status, stock, image } = req.body;
-      if (!name) return res.status(400).json({ error: 'Product name is required.' });
-      const maxProduct = await Product.findOne({}).sort({ id: -1 });
-      const nextId = (maxProduct?.id || 0) + 1;
-      const product = await Product.create({
-        id: nextId,
-        name,
-        price: Number(price || 0),
-        description: description || '',
-        category: category || 'Printing',
-        stock: stock !== undefined ? Number(stock) : 0,
-        lowStockThreshold: lowStockThreshold !== undefined ? Number(lowStockThreshold) : 10,
-        status: status || 'Active',
-        active: true,
-        image: image || ''
-      });
-      res.json({ success: true, product });
-    } catch (error) {
-      res.status(500).json({ error: 'Unable to create product.' });
-    }
-  });
-
-  app.patch('/api/products/:id', requireAdmin, async (req, res) => {
-    try {
-      const productId = Number(req.params.id);
-      const updateData = {};
-      const { name, description, price, category, lowStockThreshold, status, stock, image, active } = req.body;
-      if (name !== undefined) updateData.name = name;
-      if (description !== undefined) updateData.description = description;
-      if (price !== undefined) updateData.price = price;
-      if (category !== undefined) updateData.category = category;
-      if (lowStockThreshold !== undefined) updateData.lowStockThreshold = lowStockThreshold;
-      if (stock !== undefined) updateData.stock = stock;
-      if (image !== undefined) updateData.image = image;
-      if (active !== undefined) updateData.active = active;
-      if (status !== undefined) updateData.status = status;
-
-      let product = await Product.findOne({ id: productId });
-      if (!product) {
-        return res.status(404).json({ error: 'Product not found.' });
-      }
-      await Product.updateOne({ id: productId }, updateData);
-      product = await Product.findOne({ id: productId });
-      res.json({ success: true, product });
-    } catch (error) {
-      res.status(500).json({ error: 'Unable to edit product.' });
-    }
-  });
-
-  app.delete('/api/products/:id', requireAdmin, async (req, res) => {
-    try {
-      const productId = Number(req.params.id);
-      const product = await Product.findOne({ id: productId });
-      if (!product) return res.status(404).json({ error: 'Product not found.' });
-      await Product.deleteOne({ id: productId });
-      res.json({ success: true, message: 'Product deleted.' });
-    } catch (error) {
-      res.status(500).json({ error: 'Unable to delete product.' });
-    }
-  });
-
-  app.patch('/api/products/:id/stock/increase', requireAdmin, async (req, res) => {
-    try {
-      const productId = Number(req.params.id);
-      const { amount } = req.body || { amount: 1 };
-      const product = await Product.findOne({ id: productId });
-      if (!product) return res.status(404).json({ error: 'Product not found.' });
-      const qty = Number(amount);
-      if (isNaN(qty) || qty <= 0) return res.status(400).json({ error: 'Amount must be positive.' });
-      product.stock += qty;
-      await product.save();
-      res.json({ success: true, product });
-    } catch (error) {
-      res.status(500).json({ error: 'Unable to increase stock.' });
-    }
-  });
-
-  app.patch('/api/products/:id/stock/decrease', requireAdmin, async (req, res) => {
-    try {
-      const productId = Number(req.params.id);
-      const product = await Product.findOne({ id: productId });
-      if (!product) return res.status(404).json({ error: 'Product not found.' });
-      product.stock -= 1;
-      if (product.stock < 0) product.stock = 0;
-      await product.save();
-      res.json({ success: true, product });
-    } catch (error) {
-      res.status(500).json({ error: 'Unable to decrease stock.' });
-    }
-  });
+  app = express(); app.use(express.json({ limit: '50mb' })); productRoutes(app);
 });
+afterAll(teardownTestDB);
+beforeEach(async () => { await clearTestDB(); adminToken = generateAdminToken(await seedTestAdmin()); });
 
-afterAll(async () => {
-  await teardownTestDB();
-});
-
-beforeEach(async () => {
-  await clearTestDB();
-  const admin = await seedTestAdmin();
-  adminToken = generateAdminToken(admin);
-});
-
-describe('Products', () => {
-  describe('GET /api/products', () => {
-    it('should return empty list when no products', async () => {
-      const res = await request(app).get('/api/products');
-      expect(res.status).toBe(200);
-      expect(res.body.products).toEqual([]);
-    });
-
-    it('should return active products', async () => {
-      await seedTestProduct();
-      const res = await request(app).get('/api/products');
-      expect(res.status).toBe(200);
-      expect(res.body.products.length).toBe(1);
-      expect(res.body.products[0].name).toBe('Test T-Shirt');
-    });
+describe('authoritative product management', () => {
+  it('marks an empty collection as unconfigured for explicit legacy bootstrap', async () => {
+    const response = await request(app).get('/api/products').expect(200);
+    expect(response.body).toMatchObject({ products: [], catalogConfigured: false });
   });
 
-  describe('POST /api/products', () => {
-    it('should create product as admin', async () => {
-      const res = await request(app)
-        .post('/api/products')
-        .set('Authorization', `Bearer ${adminToken}`)
-        .send({ name: 'New Product', price: 100, category: 'Test', stock: 50 });
-      expect(res.status).toBe(200);
-      expect(res.body.product.name).toBe('New Product');
-      expect(res.body.product.stock).toBe(50);
-    });
-
-    it('should reject creation without admin token', async () => {
-      const res = await request(app)
-        .post('/api/products')
-        .send({ name: 'New Product', price: 100 });
-      expect(res.status).toBe(401);
-    });
-
-    it('should reject creation without name', async () => {
-      const res = await request(app)
-        .post('/api/products')
-        .set('Authorization', `Bearer ${adminToken}`)
-        .send({ price: 100 });
-      expect(res.status).toBe(400);
-    });
+  it('returns active products publicly and all products to Admin', async () => {
+    await Product.create([baseProduct, { ...baseProduct, id: 2, name: 'Inactive', active: false }]);
+    const publicList = await request(app).get('/api/products').expect(200);
+    expect(publicList.body.catalogConfigured).toBe(true);
+    expect(publicList.body.products.map(item => item.id)).toEqual([1]);
+    const adminList = await request(app).get('/api/admin/products').set(auth()).expect(200);
+    expect(adminList.body.products).toHaveLength(2);
   });
 
-  describe('PATCH /api/products/:id', () => {
-    it('should update product', async () => {
-      const product = await seedTestProduct();
-      const res = await request(app)
-        .patch(`/api/products/${product.id}`)
-        .set('Authorization', `Bearer ${adminToken}`)
-        .send({ name: 'Updated Product', price: 200 });
-      expect(res.status).toBe(200);
-      expect(res.body.product.name).toBe('Updated Product');
-      expect(res.body.product.price).toBe(200);
-    });
+  it('persists a whole-peso price, options, image and availability edits', async () => {
+    await Product.create(baseProduct);
+    await request(app).patch('/api/products/1').set(auth()).send({ price: 500, minQty: 3, unit: 'per order', image: 'image/new.png', specificationType: 'general', active: false }).expect(200);
+    const saved = await Product.findOne({ id: 1 }).lean();
+    expect(saved).toMatchObject({ price: 500, minQty: 3, unit: 'per order', image: 'image/new.png', specificationType: 'general', active: false });
+    expect((await request(app).get('/api/products')).body.products).toEqual([]);
   });
 
-  describe('DELETE /api/products/:id', () => {
-    it('should delete product', async () => {
-      const product = await seedTestProduct();
-      const res = await request(app)
-        .delete(`/api/products/${product.id}`)
-        .set('Authorization', `Bearer ${adminToken}`);
-      expect(res.status).toBe(200);
-      const check = await request(app).get('/api/products');
-      expect(check.body.products.length).toBe(0);
-    });
+  it.each([400, 500, 150])('accepts the whole-peso price %s', async price => {
+    await Product.create(baseProduct);
+    await request(app).patch('/api/products/1').set(auth()).send({ price }).expect(200);
+    expect((await Product.findOne({ id: 1 }).lean()).price).toBe(price);
   });
 
-  describe('Stock Management', () => {
-    it('should increase stock', async () => {
-      const product = await seedTestProduct();
-      const res = await request(app)
-        .patch(`/api/products/${product.id}/stock/increase`)
-        .set('Authorization', `Bearer ${adminToken}`)
-        .send({ amount: 50 });
-      expect(res.status).toBe(200);
-      expect(res.body.product.stock).toBe(150);
-    });
+  it.each([0, -1, 499.01, 'not-a-price'])('rejects the invalid price %s', async price => {
+    await Product.create(baseProduct);
+    await request(app).patch('/api/products/1').set(auth()).send({ price }).expect(400);
+    expect((await Product.findOne({ id: 1 }).lean()).price).toBe(400);
+  });
 
-    it('should decrease stock', async () => {
-      const product = await seedTestProduct();
-      const res = await request(app)
-        .patch(`/api/products/${product.id}/stock/decrease`)
-        .set('Authorization', `Bearer ${adminToken}`);
-      expect(res.status).toBe(200);
-      expect(res.body.product.stock).toBe(99);
-    });
+  it('rejects unknown edits instead of creating an accidental product', async () => {
+    await request(app).patch('/api/products/99').set(auth()).send({ price: 100 }).expect(404);
+    expect(await Product.countDocuments()).toBe(0);
+  });
 
-    it('should not allow stock below zero', async () => {
-      const product = await seedTestProduct();
-      await ProductModel.updateOne({ id: product.id }, { stock: 0 });
-      const res = await request(app)
-        .patch(`/api/products/${product.id}/stock/decrease`)
-        .set('Authorization', `Bearer ${adminToken}`);
-      expect(res.status).toBe(200);
-      expect(res.body.product.stock).toBe(0);
-    });
+  it('adds a made-to-order product without forcing stock tracking', async () => {
+    const response = await request(app).post('/api/products').set(auth()).send({ name: 'New Service', description: 'Custom work', category: 'Printing', price: 100, minQty: 1, unit: 'per piece', trackStock: false }).expect(201);
+    expect(response.body.product).toMatchObject({ id: 1, trackStock: false, active: true });
+  });
+
+  it('only permits stock adjustment for products configured to track stock', async () => {
+    await Product.create(baseProduct);
+    await request(app).patch('/api/products/1/stock/increase').set(auth()).send({ amount: 2 }).expect(409);
+    await Product.updateOne({ id: 1 }, { trackStock: true, stock: 2 });
+    const response = await request(app).patch('/api/products/1/stock/increase').set(auth()).send({ amount: 2 }).expect(200);
+    expect(response.body.product.stock).toBe(4);
+  });
+
+  it('prevents duplicate migration records and flags conflicting existing values', async () => {
+    await Product.create({ ...baseProduct, name: 'Existing Custom Shirt', price: 999 });
+    const preview = await previewCatalogMigration();
+    expect(preview).toHaveLength(7);
+    expect(preview.find(item => item.proposed.id === 1)).toMatchObject({ action: 'skip-existing', conflict: true });
+    expect(preview.filter(item => item.action === 'insert')).toHaveLength(6);
   });
 });

@@ -1,12 +1,13 @@
 import React, { useState } from "react";
+import { publicAsset } from '../../utils/assets';
 
-export const BMLogo = ({ size = 80, src = "/bm-logo.png", alt = "BM Printing Services" }) => {
+export const BMLogo = ({ size = 80, src = publicAsset("bm-logo.png"), alt = "BM Printing Services" }) => {
   const [imgError, setImgError] = useState(false);
 
   const imgStyle = {
     width: typeof size === "number" ? size : size,
     height: typeof size === "number" ? size : size,
-    objectFit: "cover",
+    objectFit: "contain",
     display: "block",
     borderRadius: "50%",
     backgroundColor: "white",
@@ -14,7 +15,6 @@ export const BMLogo = ({ size = 80, src = "/bm-logo.png", alt = "BM Printing Ser
 
   if (!imgError && src) {
     return (
-      // Attempt to load the provided image (place your attached file at `public/bm-logo.png`)
       <img src={src} alt={alt} style={imgStyle} onError={() => setImgError(true)} />
     );
   }

@@ -4,8 +4,10 @@ import { store } from '../../utils/storage';
 import { GoogleAuthOption } from '../Common/GoogleAuthOption';
 import { PhoneOtpPanel } from '../Common/PhoneOtpPanel';
 import { TurnstileWidget } from '../Common/TurnstileWidget';
-import { TURNSTILE_ERRORS, verifyTurnstileToken } from '../../utils/turnstile';
+import { turnstileStatusMessage, verifyTurnstileToken } from '../../utils/turnstile';
 import './AuthPages.css';
+import { publicAsset } from '../../utils/assets';
+import { BMLogo } from '../Common/BMLogo';
 
 export const LoginPage = ({ setPage, onLogin, showToast }) => {
   const [method, setMethod] = useState('email');
@@ -22,7 +24,7 @@ export const LoginPage = ({ setPage, onLogin, showToast }) => {
   const login = async () => {
     setErrorMessage('');
     if (!turnstileToken) {
-      const message = turnstileStatus === 'unavailable' ? TURNSTILE_ERRORS.unavailable : TURNSTILE_ERRORS.missing;
+      const message = turnstileStatusMessage(turnstileStatus);
       setErrorMessage(message);
       showToast?.(message, 'error');
       return;
@@ -79,15 +81,15 @@ export const LoginPage = ({ setPage, onLogin, showToast }) => {
   return (
     <main className="bm-auth-page bm-auth-page--login">
       <div className="bm-auth-print-layer" aria-hidden="true">
-        <img className="bm-auth-print bm-auth-print--tshirt" src="/image/hero/products/cutouts/tshirt-cutout.png" alt="" loading="lazy" decoding="async" />
-        <img className="bm-auth-print bm-auth-print--mug" src="/image/hero/products/cutouts/mug-cutout.png" alt="" loading="lazy" decoding="async" />
-        <img className="bm-auth-print bm-auth-print--hoodie" src="/image/hero/products/cutouts/hoodie-cutout.png" alt="" loading="lazy" decoding="async" />
-        <img className="bm-auth-print bm-auth-print--polo" src="/image/hero/products/cutouts/polo-cutout.png" alt="" loading="lazy" decoding="async" />
-        <img className="bm-auth-print bm-auth-print--sticker" src="/image/hero/products/cutouts/sticker-cutout.png" alt="" loading="lazy" decoding="async" />
+        <img className="bm-auth-print bm-auth-print--tshirt" src={publicAsset("image/hero/products/cutouts/tshirt-cutout.png")} alt="" loading="lazy" decoding="async" />
+        <img className="bm-auth-print bm-auth-print--mug" src={publicAsset("image/hero/products/cutouts/mug-cutout.png")} alt="" loading="lazy" decoding="async" />
+        <img className="bm-auth-print bm-auth-print--hoodie" src={publicAsset("image/hero/products/cutouts/hoodie-cutout.png")} alt="" loading="lazy" decoding="async" />
+        <img className="bm-auth-print bm-auth-print--polo" src={publicAsset("image/hero/products/cutouts/polo-cutout.png")} alt="" loading="lazy" decoding="async" />
+        <img className="bm-auth-print bm-auth-print--sticker" src={publicAsset("image/hero/products/cutouts/sticker-cutout.png")} alt="" loading="lazy" decoding="async" />
       </div>
       <section className="bm-auth-card" aria-labelledby="bm-login-title">
         <div className="bm-auth-logo">
-          <img src="/bm-logo.png" alt="BM Printing Services" />
+          <BMLogo size="100%" />
         </div>
         <header className="bm-auth-heading">
           <h1 id="bm-login-title"><span>Welcome</span> <span className="bm-auth-accent">Back</span></h1>

@@ -165,7 +165,16 @@ export const productCreate = [
     .isLength({ max: 100 }).withMessage('Product name must be less than 100 characters'),
 
   body('price')
-    .isFloat({ min: 0 }).withMessage('Price must be a positive number'),
+    .isInt({ min: 1 }).withMessage('Price must be a positive whole PHP amount'),
+
+  body('minQty')
+    .optional()
+    .isInt({ min: 1 }).withMessage('Minimum quantity must be at least one'),
+
+  body('unit')
+    .optional()
+    .trim()
+    .isLength({ min: 1, max: 40 }).withMessage('Unit must be between 1 and 40 characters'),
 
   body('category')
     .optional()

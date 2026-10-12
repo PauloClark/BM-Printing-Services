@@ -1,7 +1,7 @@
 import { BM_CONTACT } from '../../src/constants/contact.js';
-import { PAYMENT_METHODS, PRODUCTS } from '../../src/constants/products.js';
+import { PAYMENT_METHODS, PRODUCT_CATALOG } from '../../shared/productCatalog.js';
 
-const products = PRODUCTS.map(({ category, name, description, price, unit, minQty }) => ({
+const products = PRODUCT_CATALOG.map(({ category, name, description, price, unit, minQty }) => ({
   category,
   name,
   description,
