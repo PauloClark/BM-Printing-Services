@@ -1,7 +1,6 @@
 import { canTransitionOrder } from '../shared/orderWorkflow.js';
 import mongoose from 'mongoose';
 import bcrypt from 'bcryptjs';
-import { MongoMemoryServer } from 'mongodb-memory-server';
 import { QA_DATABASE_NAME, validateQaMongoConfig, validateQaReplicaSetHello } from './qaMongoGuard.js';
 
 const DEFAULT_ADMIN_EMAIL = process.env.ADMIN_EMAIL || 'admin@bm.com';
@@ -708,6 +707,25 @@ const Notification = mongoose.model('Notification', notificationSchema);
 
 let mongoConnectionPromise;
 
+function allowTemporaryDevelopmentDatabase() {
+  // This fallback is deliberately unavailable to QA and every deployment
+  // target. It exists only for a developer who explicitly opts in locally.
+  return process.env.NODE_ENV === 'development' &&
+    process.env.BM_QA_MODE !== 'true' &&
+    !process.env.DEPLOYMENT_ENVIRONMENT &&
+    process.env.ALLOW_IN_MEMORY_DB === 'true';
+}
+
+function validateDeploymentMongoTarget(uri, dbName) {
+  const environment = process.env.DEPLOYMENT_ENVIRONMENT;
+  if (!environment) return;
+  const expectedName = environment === 'staging' ? 'bmprinting_staging'
+    : environment === 'production' ? 'bmprinting' : null;
+  if (!expectedName) throw new Error('DEPLOYMENT_ENVIRONMENT must be staging or production.');
+  if (dbName !== expectedName) throw new Error(`MONGODB_DB_NAME must be ${expectedName} for ${environment}.`);
+  if (!/^mongodb\+srv:\/\//i.test(uri || '')) throw new Error('MONGODB_URI must use the configured remote Atlas mongodb+srv connection string.');
+}
+
 export async function ensureEmployeeIndexes() {
   try { await Employee.createCollection(); }
   catch (error) { if (error.codeName !== 'NamespaceExists' && error.code !== 48) throw error; }
@@ -734,6 +752,7 @@ export async function connectMongo() {
   const uri = process.env.MONGODB_URI || (qaMode ? '' : 'mongodb://127.0.0.1:27017/bmprinting');
   const dbName = process.env.MONGODB_DB_NAME || undefined;
   if (qaMode) validateQaMongoConfig(uri, dbName, process.env.BM_QA_MONGO_ADDRESS);
+  else validateDeploymentMongoTarget(uri, dbName);
   if (mongoose.connection.readyState === 1) {
     if (qaMode) {
       if (mongoose.connection.name !== QA_DATABASE_NAME || `${mongoose.connection.host}:${mongoose.connection.port}` !== process.env.BM_QA_MONGO_ADDRESS) {
@@ -762,8 +781,14 @@ export async function connectMongo() {
       console.log('Connected to MongoDB.');
       return mongoose.connection;
     } catch (error) {
-      if (process.env.ALLOW_IN_MEMORY_DB !== 'true' || process.env.NODE_ENV === 'production') throw error;
+      if (!allowTemporaryDevelopmentDatabase()) throw error;
       console.warn('Using explicitly enabled temporary development database. Orders will not survive a restart.');
+      let MongoMemoryServer;
+      try {
+        ({ MongoMemoryServer } = await import('mongodb-memory-server'));
+      } catch {
+        throw new Error('Temporary development MongoDB requires the mongodb-memory-server development dependency.', { cause: error });
+      }
       const memoryServer = await MongoMemoryServer.create();
       await mongoose.connect(memoryServer.getUri());
       console.log('Connected to an explicitly enabled temporary development database.');

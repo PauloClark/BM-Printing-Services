@@ -20,6 +20,7 @@
     "validate:deployment-env": "node scripts/validate-deployment-env.mjs",
     "validate:frontend-env": "node scripts/validate-deployment-env.mjs --target=frontend",
     "validate:backend-env": "node scripts/validate-deployment-env.mjs --target=backend",
+    "validate": "npm run validate:backend-env",
     "services:start": "node scripts/local-services.mjs",
     "qa:local": "node scripts/qa/launcher.mjs",
     "dev:frontend": "vite"
