@@ -10,7 +10,11 @@
     "preview": "vite preview",
     "build": "vite build",
     "server": "node server.js",
-    "test": "npx jest --config jest.config.cjs --forceExit --detectOpenHandles --runInBand && node --experimental-vm-modules ./node_modules/jest/bin/jest.js --config jest.esm.config.cjs --forceExit --detectOpenHandles --runInBand",
+    "test": "node scripts/run-tests.mjs",
+    "validate:ci-env": "node scripts/check-ci-environment.mjs",
+    "build:ci": "node scripts/check-ci-environment.mjs --build",
+    "scan:secrets": "node scripts/scan-secrets.mjs",
+    "scan:bundle": "node scripts/scan-secrets.mjs --bundle",
     "test:watch": "npx jest --config jest.config.cjs --watch --forceExit",
     "test:auth-return": "node --experimental-vm-modules ./node_modules/jest/bin/jest.js --config jest.esm.config.cjs --runInBand",
     "staff:assign": "node scripts/assign-supabase-role.mjs",
@@ -52,7 +56,12 @@
     "jest": "^30.5.2",
     "mongodb-memory-server": "10.2.3",
     "supertest": "^7.2.2",
-    "vite": "^8.1.4"
+    "vite": "8.1.6"
+  },
+  "overrides": {
+    "mongodb-memory-server-core": {
+      "mongodb": "6.21.0"
+    }
   },
   "config": {
     "mongodbMemoryServer": {

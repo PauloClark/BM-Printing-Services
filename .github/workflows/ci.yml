@@ -1,0 +1,66 @@
+name: Staging CI
+
+on:
+  push:
+    branches: [staging]
+  pull_request:
+    branches: [staging]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: staging-ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  regression:
+    name: Tests, deployment contracts, build and secret scans
+    runs-on: ubuntu-22.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 24
+          cache: npm
+      - name: Install exact lockfile
+        run: npm ci
+      - name: Scan repository source for secrets
+        run: npm run scan:secrets
+      - name: Validate offline staging and production contracts
+        run: npm run validate:ci-env
+      - name: Run isolated disposable-database regression
+        run: npm test
+      - name: Build production Vite output with synthetic configuration
+        run: npm run build:ci
+      - name: Scan frontend output for credentials and server-secret canaries
+        run: npm run scan:bundle
+      - name: Check whitespace and unexpected tracked changes
+        run: |
+          git diff --check
+          git diff --exit-code
+      - name: Report verification status
+        if: always()
+        run: echo 'Regression and build job result is ${{ job.status }}. No deployment or persistent database operations are configured.' >> "$GITHUB_STEP_SUMMARY"
+
+  dependency-security:
+    name: Production dependency audit (all severities)
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - name: Fail on unresolved production advisories
+        run: npm audit --omit=dev
+      - name: Report dependency gate
+        if: always()
+        run: echo 'Dependency gate result is ${{ job.status }}. Every production severity remains blocking; see the npm audit step for advisory paths. No exemptions or automatic fixes are applied.' >> "$GITHUB_STEP_SUMMARY"

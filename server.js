@@ -1,4 +1,5 @@
 import './server/loadEnv.js';
+import { assertDeploymentEnvironment, deploymentRuntime } from './scripts/deploymentEnvValidation.js';
 import phase3Routes from './server/routes/jobOrders.js';
 import financialRoutes from './server/routes/financials.js';
 import orderArchiveRoutes from './server/routes/orderArchives.js';
@@ -606,6 +607,10 @@ app.get("/api/ai/daily-summary", requireAdmin, async (req, res) => {
 // ─── SERVER START ─────────────────────────────────────────────────────────
 
 async function startServer() {
+  if (deploymentRuntime(process.env)) {
+    try { assertDeploymentEnvironment(process.env, 'backend'); }
+    catch (error) { console.error(error.message); process.exitCode = 1; return; }
+  }
   try {
     await connectMongo();
     // Never create credentials merely by starting the application. Legacy
