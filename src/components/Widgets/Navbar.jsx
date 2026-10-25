@@ -22,7 +22,7 @@ export const Navbar = ({ page, setPage, user, onLogout }) => {
   const [logoutModalMounted, setLogoutModalMounted] = useState(false);
   const [logoutModalOpen, setLogoutModalOpen] = useState(false);
   const [logoutLoading, setLogoutLoading] = useState(false);
-  const navRef = useRef(null);
+  const menuRef = useRef(null);
   const toggleRef = useRef(null);
   const cancelLogoutRef = useRef(null);
   const confirmLogoutRef = useRef(null);
@@ -34,6 +34,45 @@ export const Navbar = ({ page, setPage, user, onLogout }) => {
 
   useEffect(() => { setMenuOpen(false); }, [page]);
   useEffect(() => () => window.clearTimeout(closeTimerRef.current), []);
+  useEffect(() => {
+    if (!menuOpen) return undefined;
+
+    const previousBodyOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+
+    const menuControls = () => Array.from(menuRef.current?.querySelectorAll(
+      'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
+    ) || []);
+    const focusable = () => [toggleRef.current, ...menuControls()].filter(Boolean);
+    const focusFrame = window.requestAnimationFrame(() => menuControls()[0]?.focus());
+    const handleMenuKeyDown = event => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        setMenuOpen(false);
+        window.requestAnimationFrame(() => toggleRef.current?.focus());
+        return;
+      }
+      if (event.key !== "Tab") return;
+      const controls = focusable();
+      if (!controls.length) return;
+      const first = controls[0];
+      const last = controls[controls.length - 1];
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
+    document.addEventListener("keydown", handleMenuKeyDown);
+
+    return () => {
+      window.cancelAnimationFrame(focusFrame);
+      document.removeEventListener("keydown", handleMenuKeyDown);
+      document.body.style.overflow = previousBodyOverflow;
+    };
+  }, [menuOpen]);
   useEffect(() => {
     if (!logoutModalMounted) return undefined;
     const previousFocus = document.activeElement;
@@ -95,14 +134,11 @@ export const Navbar = ({ page, setPage, user, onLogout }) => {
   useEffect(() => {
     const desktop = window.matchMedia("(min-width: 768px)");
     const closeOnResize = () => { if (desktop.matches) setMenuOpen(false); };
-    const closeOutside = (event) => {
-      if (!navRef.current?.contains(event.target)) setMenuOpen(false);
-    };
-    desktop.addEventListener("change", closeOnResize);
-    document.addEventListener("pointerdown", closeOutside);
+    if (desktop.addEventListener) desktop.addEventListener("change", closeOnResize);
+    else desktop.addListener(closeOnResize);
     return () => {
-      desktop.removeEventListener("change", closeOnResize);
-      document.removeEventListener("pointerdown", closeOutside);
+      if (desktop.removeEventListener) desktop.removeEventListener("change", closeOnResize);
+      else desktop.removeListener(closeOnResize);
     };
   }, []);
   const links = [
@@ -115,17 +151,7 @@ export const Navbar = ({ page, setPage, user, onLogout }) => {
 
   return (
     <>
-    <nav
-      ref={navRef}
-      className="bm-navbar"
-      aria-label="Main navigation"
-      onKeyDown={(event) => {
-        if (event.key === "Escape" && menuOpen) {
-          setMenuOpen(false);
-          toggleRef.current?.focus();
-        }
-      }}
-    >
+    <nav className="bm-navbar" aria-label="Main navigation">
       <div
         className="bm-navbar-row"
         style={{
@@ -178,7 +204,7 @@ export const Navbar = ({ page, setPage, user, onLogout }) => {
         >
           <span aria-hidden="true">{menuOpen ? "Close" : "Menu"}</span>
         </button>
-        <div id="bm-navigation-links" className={`bm-navbar-links${menuOpen ? " is-open" : ""}`}>
+        <div ref={menuRef} id="bm-navigation-links" className={`bm-navbar-links${menuOpen ? " is-open" : ""}`} aria-label="Navigation links">
           {!isStaff && links.map(l => (
             <button
               className="bm-navbar-link"
@@ -256,6 +282,16 @@ export const Navbar = ({ page, setPage, user, onLogout }) => {
         </div>
       </div>
     </nav>
+    {menuOpen && (
+      <div
+        className="bm-navbar-backdrop"
+        aria-hidden="true"
+        onClick={() => {
+          setMenuOpen(false);
+          window.requestAnimationFrame(() => toggleRef.current?.focus());
+        }}
+      />
+    )}
     {logoutModalMounted && (
       <div
         className={`bm-logout-backdrop${logoutModalOpen ? " is-open" : ""}`}
