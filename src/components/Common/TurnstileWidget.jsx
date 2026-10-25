@@ -59,6 +59,7 @@ export const TurnstileWidget = ({ resetSignal = 0, onTokenChange, onStatusChange
   useEffect(() => {
     if (!resetSignal) return;
     callbacksRef.current.onTokenChange('');
+    callbacksRef.current.onStatusChange('loading');
     if (widgetIdRef.current !== null) window.turnstile?.reset(widgetIdRef.current);
   }, [resetSignal]);
 

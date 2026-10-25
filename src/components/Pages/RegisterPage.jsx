@@ -1,6 +1,6 @@
 import { authCallbackUrl } from '../../utils/authReturn';
 import { registerCustomer } from '../../utils/authActions';
-import React, { useState } from 'react';
+import React, { useRef, useState } from 'react';
 import { supabaseAppUser } from '../../../shared/roles';
 import { store } from '../../utils/storage';
 import { GoogleAuthOption } from '../Common/GoogleAuthOption';
@@ -8,7 +8,7 @@ import './AuthPages.css';
 import { publicAsset } from '../../utils/assets';
 import { BMLogo } from '../Common/BMLogo';
 import { TurnstileWidget } from '../Common/TurnstileWidget';
-import { requireTurnstileToken } from '../../utils/turnstile';
+import { createTurnstileAttempt } from '../../utils/turnstile';
 
 export const RegisterPage = ({ setPage, onLogin, showToast: notify }) => {
   const [form, setForm] = useState({
@@ -24,6 +24,7 @@ export const RegisterPage = ({ setPage, onLogin, showToast: notify }) => {
   const [captchaToken, setCaptchaToken] = useState('');
   const [captchaStatus, setCaptchaStatus] = useState('loading');
   const [captchaReset, setCaptchaReset] = useState(0);
+  const captchaAttempt = useRef(createTurnstileAttempt());
   const onChange = (e) => {
     const { name, value } = e.target;
     setErrorMessage('');
@@ -44,8 +45,11 @@ export const RegisterPage = ({ setPage, onLogin, showToast: notify }) => {
       return;
     }
     let token;
-    try { token = requireTurnstileToken(captchaToken, captchaStatus); }
+    try { token = captchaAttempt.current.take(captchaToken, captchaStatus); }
     catch (error) { setErrorMessage(error.message); notify?.(error.message, 'error'); return; }
+    if (token === null) return;
+    setCaptchaToken('');
+    setCaptchaStatus('loading');
 
     setLoading(true);
     try {
@@ -65,8 +69,11 @@ export const RegisterPage = ({ setPage, onLogin, showToast: notify }) => {
       setErrorMessage(message);
       notify?.(message, 'error');
     } finally {
-      setCaptchaToken('');
-      setCaptchaReset(value => value + 1);
+      captchaAttempt.current.finish(() => {
+        setCaptchaToken('');
+        setCaptchaStatus('loading');
+        setCaptchaReset(value => value + 1);
+      });
       setLoading(false);
     }
   };

@@ -1,12 +1,12 @@
 import { signInAccount } from '../../utils/authActions';
-import React, { useState } from 'react';
+import React, { useRef, useState } from 'react';
 import { store } from '../../utils/storage';
 import { GoogleAuthOption } from '../Common/GoogleAuthOption';
 import './AuthPages.css';
 import { publicAsset } from '../../utils/assets';
 import { BMLogo } from '../Common/BMLogo';
 import { TurnstileWidget } from '../Common/TurnstileWidget';
-import { requireTurnstileToken } from '../../utils/turnstile';
+import { createTurnstileAttempt } from '../../utils/turnstile';
 
 export const LoginPage = ({ setPage, onLogin, showToast }) => {
   const [email, setEmail] = useState('');
@@ -18,11 +18,15 @@ export const LoginPage = ({ setPage, onLogin, showToast }) => {
   const [captchaToken, setCaptchaToken] = useState('');
   const [captchaStatus, setCaptchaStatus] = useState('loading');
   const [captchaReset, setCaptchaReset] = useState(0);
+  const captchaAttempt = useRef(createTurnstileAttempt());
   const login = async () => {
     setErrorMessage('');
     let token;
-    try { token = requireTurnstileToken(captchaToken, captchaStatus); }
+    try { token = captchaAttempt.current.take(captchaToken, captchaStatus); }
     catch (error) { setErrorMessage(error.message); showToast?.(error.message, 'error'); return; }
+    if (token === null) return;
+    setCaptchaToken('');
+    setCaptchaStatus('loading');
     setLoading(true);
     try {
       const { supabase } = await import('../../utils/supabaseClient');
@@ -36,8 +40,11 @@ export const LoginPage = ({ setPage, onLogin, showToast }) => {
       setErrorMessage(message);
       showToast?.(message, 'error');
     } finally {
-      setCaptchaToken('');
-      setCaptchaReset(value => value + 1);
+      captchaAttempt.current.finish(() => {
+        setCaptchaToken('');
+        setCaptchaStatus('loading');
+        setCaptchaReset(value => value + 1);
+      });
       setLoading(false);
     }
   };
