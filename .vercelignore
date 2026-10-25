@@ -1,0 +1,8 @@
+# The Vercel project is the static Vite frontend only. The Express API and its
+# legacy serverless adapter and root process entry run on the separately
+# configured persistent host. Shared validation modules remain available to CI.
+api/**
+server.js
+tests/**
+uploads/**
+reports/**

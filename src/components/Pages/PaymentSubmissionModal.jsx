@@ -1,10 +1,11 @@
 import { useState } from 'react';
 import { orderApi } from '../../utils/orderApi';
-import { PAYMENT_METHODS } from '../../constants/paymentMethods';
+import { PAYMENT_METHODS as ALL_PAYMENT_METHODS } from '../../constants/paymentMethods';
 import { Btn } from '../Common/Btn';
 import { Modal } from '../Common/Modal';
 import './PaymentWorkflow.css';
 
+const PAYMENT_METHODS = ALL_PAYMENT_METHODS.filter(method => method.id !== 'cash');
 const MAX_RECEIPT_SIZE = 10 * 1024 * 1024;
 const RECEIPT_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp']);
 const RECEIPT_EXTENSIONS = /\.(jpe?g|png|webp)$/i;

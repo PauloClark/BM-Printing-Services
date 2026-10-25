@@ -18,3 +18,89 @@
 
 .bm-admin-order-modal{display:grid;gap:16px}.bm-admin-order-section{min-width:0;padding:18px;border:1px solid #303744;border-radius:10px;background:#11161e}.bm-admin-order-section__heading{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;margin-bottom:15px}.bm-admin-order-section__heading span:first-child{color:#d8798a;font-size:10px;font-weight:700;letter-spacing:.09em;text-transform:uppercase}.bm-admin-order-section__heading h4{margin:4px 0 0;color:#f8fafc;font:700 16px Montserrat,sans-serif}.bm-admin-order-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;margin:0}.bm-admin-order-grid>div{min-width:0;padding:11px;border:1px solid #2b333f;border-radius:7px;background:#171d26}.bm-admin-order-grid dt{color:#8e9bad;font-size:9px;font-weight:700;letter-spacing:.06em;text-transform:uppercase}.bm-admin-order-grid dd{margin:5px 0 0;color:#e9edf3;font-size:12px;line-height:1.45;overflow-wrap:anywhere;white-space:pre-wrap}.bm-admin-order-copy{margin-top:12px;padding:12px;border-left:3px solid #8f1f32;background:#171d26}.bm-admin-order-copy strong{color:#d8dee8;font-size:11px}.bm-admin-order-copy p{margin:5px 0 0;color:#abb6c5;font-size:12px;line-height:1.55;white-space:pre-wrap}.bm-admin-order-section .bm-design-files{padding-top:0;border-top:0}.bm-admin-order-section .bm-design-files h3{color:#f8fafc;font-size:14px}.bm-admin-order-section .bm-design-file{background:#171d26}.bm-admin-order-section .bm-design-file__name{display:flex;align-items:center;gap:10px;min-width:0}.bm-admin-order-section .bm-design-file__name svg{flex:0 0 20px;width:20px;height:20px;fill:none;stroke:#d8798a;stroke-width:1.6}.bm-admin-order-section .bm-design-file__name span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.bm-admin-order-section .bm-design-file__actions{display:flex;gap:8px}.bm-admin-order-section .bm-design-file__actions button{min-height:36px;padding:7px 12px;border:1px solid #4a5667;border-radius:6px;background:#222936;color:#f4f6f9;font-weight:700;cursor:pointer}.bm-admin-order-section .bm-design-file__actions button:last-child{border-color:#8f1f32;background:#8f1f32}.bm-admin-order-payment{padding:6px 10px;border:1px solid #4a5667;border-radius:999px;color:#d8dee8;font-size:10px;font-weight:800}.bm-admin-order-payment.is-verified{border-color:#265d45;background:#142b22;color:#8fddb5}.bm-admin-order-payment.is-for-verification{border-color:#725422;background:#302510;color:#f1c66d}.bm-admin-order-callout{display:flex;align-items:center;justify-content:space-between;gap:16px;margin-top:14px;padding:12px;border:1px solid #725422;border-radius:8px;background:#261f13}.bm-admin-order-callout p,.bm-admin-order-muted{margin:0;color:#b8c1ce;font-size:12px;line-height:1.5}.bm-admin-order-history{display:grid;gap:0;margin:15px 0 0;padding:0;list-style:none}.bm-admin-order-history li{display:grid;grid-template-columns:14px 1fr;gap:10px;min-height:48px}.bm-admin-order-history li>span{position:relative;width:9px;height:9px;margin-top:4px;border-radius:50%;background:#a51d36}.bm-admin-order-history li:not(:last-child)>span:after{content:'';position:absolute;top:9px;bottom:-35px;left:4px;width:1px;background:#3b4452}.bm-admin-order-history strong,.bm-admin-order-history time{display:block}.bm-admin-order-history strong{color:#e7ebf1;font-size:11px}.bm-admin-order-history time{margin-top:2px;color:#8996a8;font-size:9px}.bm-admin-order-history p{margin:4px 0 0;color:#aeb8c7;font-size:11px}.bm-admin-order-actions{display:flex;justify-content:flex-end;gap:8px;padding-top:4px}
 @media(max-width:720px){.bm-admin-order-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}@media(max-width:480px){.bm-admin-order-section{padding:14px}.bm-admin-order-grid{grid-template-columns:1fr}.bm-admin-order-callout,.bm-admin-order-section__heading{align-items:stretch;flex-direction:column}.bm-admin-order-callout button,.bm-admin-order-actions button{width:100%}.bm-admin-order-actions{flex-direction:column}.bm-admin-order-section .bm-design-file__actions{width:100%}.bm-admin-order-section .bm-design-file__actions button{flex:1}}
+
+.bm-admin-order-payment-grid {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.bm-admin-order-cash-confirm {
+  display: grid;
+  grid-template-columns: minmax(190px, 0.8fr) minmax(240px, 1.2fr);
+  gap: 14px 18px;
+  align-items: end;
+  margin-top: 16px;
+  padding-top: 16px;
+  border-top: 1px solid #303744;
+}
+
+.bm-admin-order-cash-confirm label {
+  display: flex;
+  min-width: 0;
+  color: #cbd5e1;
+  font-size: 11px;
+  font-weight: 650;
+}
+
+.bm-admin-order-cash-amount {
+  flex-direction: column;
+  gap: 7px;
+}
+
+.bm-admin-order-cash-amount input {
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.bm-admin-order-cash-check {
+  flex-direction: row;
+  align-items: center;
+  gap: 9px;
+  min-height: 42px;
+  line-height: 1.45;
+  cursor: pointer;
+}
+
+.bm-admin-order-cash-check input {
+  flex: 0 0 18px;
+  width: 18px;
+  height: 18px;
+  margin: 0;
+  accent-color: #a51d36;
+}
+
+.bm-admin-order-cash-action {
+  grid-column: 1 / -1;
+  display: flex;
+  justify-content: flex-end;
+  padding-top: 2px;
+}
+
+.bm-admin-order-section .bm-design-preview img {
+  max-height: 300px;
+}
+
+@media (max-width: 720px) {
+  .bm-admin-order-payment-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 480px) {
+  .bm-admin-order-payment-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .bm-admin-order-cash-confirm {
+    grid-template-columns: minmax(0, 1fr);
+    align-items: stretch;
+  }
+
+  .bm-admin-order-cash-action {
+    justify-content: stretch;
+  }
+
+  .bm-admin-order-cash-action button {
+    width: 100%;
+  }
+}
+.bm-financial-resolution__form{display:grid;gap:10px;margin-top:14px}.bm-financial-resolution__form label{display:grid;gap:5px;color:#d8dee8;font-size:11px;font-weight:700}.bm-financial-resolution__form input,.bm-financial-resolution__form select,.bm-financial-resolution__form textarea{width:100%;box-sizing:border-box;padding:9px;border:1px solid #465161;border-radius:6px;background:#0c1118;color:#f4f6f8;font:inherit}.bm-financial-resolution__form textarea{min-height:70px;resize:vertical}.bm-financial-resolution__confirmation{grid-template-columns:18px 1fr;align-items:start;line-height:1.5}.bm-financial-resolution__confirmation input{width:auto;margin:2px 0}

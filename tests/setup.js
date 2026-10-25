@@ -3,24 +3,41 @@ import { MongoMemoryServer } from 'mongodb-memory-server';
 import express from 'express';
 import cors from 'cors';
 import bcrypt from 'bcryptjs';
-import { User, Product, Order, Inventory, Production, OrderFile, AuditLog } from '../server/db.js';
+import { User, Product, Order, Inventory, Production, OrderFile, AuditLog, ensureEmployeeIndexes } from '../server/db.js';
 import { generateToken, requireAuth, requireAdmin } from '../server/middleware/auth.js';
 
-let mongoServer;
+let mongoServer = null;
 
 export async function setupTestDB() {
-  mongoServer = await MongoMemoryServer.create();
-  const uri = mongoServer.getUri();
-  await mongoose.connect(uri);
-  return uri;
+  if (mongoServer || mongoose.connection.readyState !== 0) throw new Error('Test MongoDB fixture is already active.');
+  const server = await MongoMemoryServer.create();
+  const uri = server.getUri();
+  try {
+    await mongoose.connect(uri, { dbName: 'bm_test' });
+    if (mongoose.connection.name !== 'bm_test') throw new Error('Test MongoDB fixture connected to an unexpected database.');
+    await ensureEmployeeIndexes();
+    mongoServer = server;
+    return uri;
+  } catch (error) {
+    if (mongoose.connection.readyState !== 0) await mongoose.disconnect().catch(() => {});
+    await server.stop().catch(() => {});
+    throw error;
+  }
 }
 
 export async function teardownTestDB() {
-  await mongoose.disconnect();
-  await mongoServer.stop();
+  if (mongoose.connection.readyState !== 0) await mongoose.disconnect();
+  if (mongoServer) {
+    const server = mongoServer;
+    mongoServer = null;
+    await server.stop();
+  }
 }
 
 export async function clearTestDB() {
+  if (mongoose.connection.readyState !== 1 || mongoose.connection.name !== 'bm_test') {
+    throw new Error('Refusing to clear collections outside the disposable bm_test database.');
+  }
   const collections = mongoose.connection.collections;
   for (const key in collections) {
     await collections[key].deleteMany({});

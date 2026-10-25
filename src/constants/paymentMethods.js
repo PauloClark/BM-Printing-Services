@@ -1,6 +1,7 @@
 import { publicAsset } from '../utils/assets.js';
 
 export const PAYMENT_METHODS = [
+  { id: 'cash', backendValue: 'cash', name: 'Cash - Pay at Shop', accountName: 'Pay in person at BM Printing Services', accountNumber: '' },
   {
     id: 'gcash',
     backendValue: 'GCash',

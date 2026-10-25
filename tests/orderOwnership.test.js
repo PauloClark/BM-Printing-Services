@@ -15,8 +15,21 @@ jest.mock('../server/reportService.js', () => ({
 
 jest.mock('../server/utils.js', () => ({
   safeText: value => typeof value === 'string' ? value : '',
-  serializeOrder: order => order.serialize(),
-  uploadDesignFile: jest.fn()
+  serializeOrder: order => ({
+    ...order.serialize(),
+    paymentMethod: order.paymentMethod,
+    payment_method: order.paymentMethod,
+    payment_status: order.paymentStatus === 'Verified' ? 'paid' : order.paymentStatus === 'For Verification' ? 'for_verification' : 'pending',
+    orderSource: order.orderSource || 'online',
+    order_source: order.orderSource || 'online',
+    createdBy: order.createdBy || '',
+    specificationDetails: order.specificationDetails || {},
+    cashPayment: order.cashPayment?.toObject?.() || order.cashPayment || null
+  }),
+  uploadDesignFile: jest.fn().mockReturnValue({
+    fileName: 'design-test.png', originalName: 'design-test.png', fileType: 'image/png',
+    fileSize: 4, filePath: '/uploads/orders/design-test.png'
+  })
 }));
 
 let app;
@@ -43,6 +56,7 @@ const supabaseUsers = {
     user_metadata: { full_name: 'Account B' }
   }
 };
+const testDesignFile = { filename: 'design-test.png', base64: 'data:image/png;base64,dGVzdA==' };
 
 const createStoredOrder = (orderId, customerId, customerEmail) => Order.create({
   orderId,
@@ -60,7 +74,9 @@ describe('Saved order ownership workflow', () => {
   const payload = {
     customer: 'Account A', email: 'account-a@example.com', phone: '09171234567',
     product: 'Polo Shirt', productId: 2, quantity: 12, unitPrice: 500,
-    total: 6000, payment: 'GCash', specs: 'Size: XL\nPrint: Front logo', notes: 'Call before pickup'
+    total: 6000, payment: 'GCash', specs: 'Size: XL\nColor: Black', notes: 'Call before pickup',
+    specificationDetails: { size: 'XL', color: 'Black' },
+    designFile: testDesignFile
   };
   it('saves authenticated checkout, hides unassigned orders from staff, and exposes admin updates to the customer', async () => {
     const created = await request(app).post('/api/orders').set('Authorization', 'Bearer supabase-user-a-token')
@@ -95,6 +111,51 @@ describe('Saved order ownership workflow', () => {
     expect(savedOrder.designFilePath).toBe(created.body.order.designFilePath);
     expect(savedOrder.designFileOriginalName).toBe('shirt-reference.png');
   });
+  it('creates authenticated Admin walk-in orders without a customer account and holds cash payment pending', async () => {
+    await Product.create({
+      id: 21, name: 'Walk-in Hoodie', price: 600, minQty: 1, active: true, trackStock: true,
+      stock: 2, specificationType: 'hoodie'
+    });
+    const response = await request(app).post('/api/admin/orders/walk-in')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({
+        customer: 'Walk-in Customer', phone: '', email: '', fulfillmentMethod: 'pickup',
+        productId: 21, quantity: 1, payment: 'cash',
+        specificationDetails: { size: 'Large', color: 'Blue' },
+        designFile: { filename: 'design-test.png', base64: 'data:image/png;base64,dGVzdA==' }
+      });
+    expect(response.status).toBe(200);
+    expect(response.body.order).toMatchObject({
+      customer: 'Walk-in Customer', orderSource: 'walk_in', paymentMethod: 'cash',
+      paymentStatus: 'pending', status: 'Pending', userId: null, createdBy: 'admin-test-001',
+      total: 600, specificationDetails: { size: 'Large', color: 'Blue' }
+    });
+    expect(response.body.order.id).toMatch(/^ORD-/);
+    expect((await Product.findOne({ id: 21 })).stock).toBe(1);
+    expect(await User.countDocuments({ role: 'customer' })).toBe(0);
+    expect((await Order.findOne({ orderId: response.body.order.id })).customerId).toBeNull();
+  });
+  it('rejects customer access to Admin walk-in order creation', async () => {
+    const response = await request(app).post('/api/admin/orders/walk-in')
+      .set('Authorization', 'Bearer supabase-user-a-token')
+      .send({ customer: 'Walk-in Customer' });
+    expect(response.status).toBe(403);
+  });
+  it('keeps payment verification separate from Admin order confirmation', async () => {
+    await Order.updateOne({ orderId: 'ORD-A' }, { $set: { paymentStatus: 'Verified' } });
+    const unchanged = await Order.findOne({ orderId: 'ORD-A' });
+    expect(unchanged.status).toBe('Pending');
+
+    const customer = await request(app).patch('/api/orders/ORD-A/status')
+      .set('Authorization', 'Bearer supabase-user-a-token').send({ status: 'Confirmed' });
+    expect(customer.status).toBe(403);
+
+    const confirmed = await request(app).patch('/api/orders/ORD-A/status')
+      .set('Authorization', `Bearer ${adminToken}`).send({ status: 'Confirmed', expectedStatus: 'Pending' });
+    expect(confirmed.status).toBe(200);
+    expect(confirmed.body.order.status).toBe('Confirmed');
+    expect(confirmed.body.order.paymentStatus).toBe('Verified');
+  });
   it('rejects unauthenticated, customer and user-metadata role forgery access', async () => {
     for (const token of ['', 'supabase-user-a-token', 'forged-staff-token']) {
       const headers = token ? { Authorization: `Bearer ${token}` } : {};
@@ -103,13 +164,7 @@ describe('Saved order ownership workflow', () => {
     }
   });
   it('denies staff-only order access when a managed employee roster has no matching active link', async () => {
-    await Employee.create({
-      name: 'Linked Employee',
-      email: 'linked@example.com',
-      active: true,
-      supabaseUserId: 'some-other-staff-id',
-      createdBy: 'admin-a'
-    });
+    await Employee.updateOne({ supabaseUserId: 'supabase-staff' }, { $set: { active: false } });
 
     const response = await request(app)
       .get('/api/staff/orders')
@@ -129,12 +184,12 @@ describe('Saved order ownership workflow', () => {
     const patch = body => request(app).patch('/api/orders/ORD-A/status').set('Authorization', `Bearer ${adminToken}`).send(body);
     expect((await patch({ status: 'Completed' })).status).toBe(409);
     expect((await patch({ status: 'Confirmed', expectedStatus: 'Processing' })).status).toBe(409);
-    expect((await patch({ status: 'Cancelled', expectedStatus: 'Pending' })).status).toBe(200);
+    expect((await patch({ status: 'Cancelled', expectedStatus: 'Pending', cancellationReason: 'Customer changed the order.' })).status).toBe(200);
     expect((await patch({ status: 'Confirmed' })).status).toBe(409);
   });
   it('allows only one competing transition to save', async () => {
     const responses = await Promise.all(['Confirmed', 'Cancelled'].map(status => request(app)
-      .patch('/api/orders/ORD-A/status').set('Authorization', `Bearer ${adminToken}`).send({ status, expectedStatus: 'Pending' })));
+      .patch('/api/orders/ORD-A/status').set('Authorization', `Bearer ${adminToken}`).send({ status, expectedStatus: 'Pending', ...(status === 'Cancelled' ? { cancellationReason: 'Customer cancelled.' } : {}) })));
     expect(responses.filter(r => r.status === 200)).toHaveLength(1);
     expect(responses.filter(r => [400, 409].includes(r.status))).toHaveLength(1);
   });
@@ -216,6 +271,8 @@ beforeEach(async () => {
   await clearTestDB();
   const admin = await seedTestAdmin();
   adminToken = generateToken(admin);
+  await Employee.create({ name: 'Staff', email: 'staff@example.com', active: true,
+    supabaseUserId: 'supabase-staff', permissions: ['view_assigned_jobs', 'update_job_progress'], createdBy: admin.id });
   await createStoredOrder('ORD-A', 'supabase-user-a', 'account-a@example.com');
   await createStoredOrder('ORD-B', 'supabase-user-b', 'account-b@example.com');
   await createStoredOrder('ORD-LEGACY-A', null, 'account-a@example.com');
@@ -253,7 +310,9 @@ describe('Supabase customer order ownership', () => {
         quantity: 1,
         unitPrice: 180,
         total: 180,
-        payment: 'GCash'
+        payment: 'GCash',
+        specificationDetails: { size: 'Large', color: 'Black' },
+        designFile: testDesignFile
       });
 
     expect(response.status).toBe(200);
@@ -274,7 +333,9 @@ describe('Supabase customer order ownership', () => {
         quantity: 12,
         unitPrice: 1,
         total: 1,
-        payment: 'GCash'
+        payment: 'GCash',
+        specificationDetails: { size: 'Large', color: 'Black' },
+        designFile: testDesignFile
       });
 
     expect(response.status).toBe(200);
@@ -287,7 +348,7 @@ describe('Supabase customer order ownership', () => {
 
   it('uses the managed price and preserves the order snapshot after later catalog edits', async () => {
     await Product.create({ id: 2, name: 'Managed Polo', price: 725, minQty: 1, active: true });
-    const response = await request(app).post('/api/orders').set('Authorization', 'Bearer supabase-user-a-token').send({ customer: 'Account A', phone: '09171234567', product: 'Fake', productId: 2, quantity: 2, unitPrice: 1, payment: 'GCash' });
+    const response = await request(app).post('/api/orders').set('Authorization', 'Bearer supabase-user-a-token').send({ customer: 'Account A', phone: '09171234567', product: 'Fake', productId: 2, quantity: 2, unitPrice: 1, payment: 'GCash', specificationDetails: { size: 'Large', color: 'Black' }, designFile: testDesignFile });
     expect(response.status).toBe(200);
     await Product.updateOne({ id: 2 }, { price: 900, name: 'Renamed Polo' });
     const saved = await Order.findOne({ orderId: response.body.order.id }).lean();
@@ -302,6 +363,16 @@ describe('Supabase customer order ownership', () => {
     expect((await send(1)).status).toBe(400);
     expect((await send(2)).status).toBe(400);
     expect(await Order.countDocuments()).toBe(before);
+  });
+
+  it('rejects unavailable quantities for tracked-stock products', async () => {
+    const send = quantity => request(app).post('/api/orders').set('Authorization', 'Bearer supabase-user-a-token')
+      .send({ customer: 'Account A', phone: '09171234567', product: 'Tracked Shirt', productId: 1, quantity, unitPrice: 400, payment: 'GCash', specificationDetails: { size: 'Large', color: 'Black' }, designFile: testDesignFile });
+    await Product.create({ id: 1, name: 'Tracked Shirt', price: 400, minQty: 1, active: true, trackStock: true, stock: 0 });
+    expect((await send(1)).status).toBe(409);
+    await Product.updateOne({ id: 1 }, { stock: 2 });
+    expect((await send(3)).status).toBe(409);
+    expect((await send(2)).status).toBe(200);
   });
 
   it('rejects product IDs that are absent from both the database and catalog', async () => {
@@ -354,7 +425,7 @@ describe('Phase 1 identity and safe failures', () => {
     const failure = jest.spyOn(Order, 'create').mockRejectedValueOnce(new Error('private-database-connection-string'));
     const logger = jest.spyOn(console, 'error').mockImplementation(() => {});
     try {
-      const response = await request(app).post('/api/orders').set('Authorization', 'Bearer supabase-user-a-token').send({customer: 'Account A', email: 'account-a@example.com', phone: '09171234567', productId: 1, product: 'T-Shirt', quantity: 1, total: 400, payment: 'GCash'});
+      const response = await request(app).post('/api/orders').set('Authorization', 'Bearer supabase-user-a-token').send({customer: 'Account A', email: 'account-a@example.com', phone: '09171234567', productId: 1, product: 'T-Shirt', quantity: 1, total: 400, payment: 'GCash', specificationDetails: { size: 'Large', color: 'Black' }, designFile: testDesignFile});
       expect(response.status).toBe(500);
       expect(response.body.reference).toMatch(/^[a-f0-9]{12}$/);
       expect(response.body.error).toContain('Check My Orders');

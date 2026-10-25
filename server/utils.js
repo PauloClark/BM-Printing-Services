@@ -1,3 +1,4 @@
+import { storePrivateFile, storageConfigured } from './uploadStorage.js';
 import { saveDesignFile } from './designFiles.js';
 import path from 'path';
 import fs from 'fs';
@@ -36,6 +37,14 @@ export function serializeOrder(order) {
     totalAmount: order.totalAmount,
     payment: order.paymentMethod,
     paymentMethod: order.paymentMethod,
+    payment_method: order.paymentMethod,
+    payment_status: order.paymentStatus === 'Verified' ? 'paid' : order.paymentStatus === 'For Verification' ? 'for_verification' : 'pending',
+    orderSource: order.orderSource || 'online',
+    order_source: order.orderSource || 'online',
+    createdBy: order.createdBy || '',
+    fulfillmentMethod: order.fulfillmentMethod,
+    specificationDetails: order.specificationDetails || {},
+    cashPayment: order.cashPayment || null,
     paymentStatus: order.paymentStatus || 'Unpaid',
     paymentRejectionReason: order.paymentRejectionReason || '',
     latestPayment: order.paymentSubmissions?.length ? (() => {
@@ -48,8 +57,12 @@ export function serializeOrder(order) {
         status: payment.status,
         submittedAt: payment.submittedAt,
         verifiedAt: payment.verifiedAt,
+        verifiedBy: payment.verifiedBy,
         rejectionReason: payment.rejectionReason,
-        receiptOriginalName: payment.receiptOriginalName
+        receiptOriginalName: payment.receiptOriginalName,
+        reconciliationAt: payment.reconciliationAt,
+        reconciliationBy: payment.reconciliationBy,
+        reconciliationNote: payment.reconciliationNote
       };
     })() : null,
     status: order.status,
@@ -77,7 +90,9 @@ export function serializeOrder(order) {
   };
 }
 
-export function uploadDesignFile(fileData) {
+export async function uploadDesignFile(fileData, orderId, kind) {
+  if (storageConfigured()) return storePrivateFile(fileData, orderId, kind);
+  if (process.env.NODE_ENV === 'production' || process.env.VERCEL) throw Object.assign(new Error("Private Storage is not configured."), { status: 503 });
   return saveDesignFile(fileData, path.resolve(process.env.ORDER_UPLOAD_DIR || path.join(UPLOADS_DIR, 'orders')));
 }
 

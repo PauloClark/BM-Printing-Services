@@ -10,14 +10,18 @@
     "preview": "vite preview",
     "build": "vite build",
     "server": "node server.js",
-    "test": "npx jest --config jest.config.cjs --forceExit --detectOpenHandles",
+    "test": "npx jest --config jest.config.cjs --forceExit --detectOpenHandles --runInBand && node --experimental-vm-modules ./node_modules/jest/bin/jest.js --config jest.esm.config.cjs --forceExit --detectOpenHandles --runInBand",
     "test:watch": "npx jest --config jest.config.cjs --watch --forceExit",
+    "test:auth-return": "node --experimental-vm-modules ./node_modules/jest/bin/jest.js --config jest.esm.config.cjs --runInBand",
     "staff:assign": "node scripts/assign-supabase-role.mjs",
     "catalog:migrate:dry-run": "node scripts/migrate-product-catalog.mjs",
     "db:migrate:dry-run": "node scripts/migrate-mongodb-to-atlas.mjs",
     "db:migrate:execute": "node scripts/migrate-mongodb-to-atlas.mjs --execute",
     "validate:deployment-env": "node scripts/validate-deployment-env.mjs",
+    "validate:frontend-env": "node scripts/validate-deployment-env.mjs --target=frontend",
+    "validate:backend-env": "node scripts/validate-deployment-env.mjs --target=backend",
     "services:start": "node scripts/local-services.mjs",
+    "qa:local": "node scripts/qa/launcher.mjs",
     "dev:frontend": "vite"
   },
   "dependencies": {
@@ -45,8 +49,13 @@
     "@vitejs/plugin-react": "^6.1.2",
     "babel-jest": "^30.5.2",
     "jest": "^30.5.2",
-    "mongodb-memory-server": "^11.2.0",
+    "mongodb-memory-server": "10.2.3",
     "supertest": "^7.2.2",
     "vite": "^8.1.4"
+  },
+  "config": {
+    "mongodbMemoryServer": {
+      "version": "7.0.14"
+    }
   }
 }

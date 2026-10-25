@@ -3,12 +3,14 @@ import express from 'express';
 import mongoose from 'mongoose';
 import { MongoMemoryReplSet } from 'mongodb-memory-server';
 import ExcelJS from 'exceljs';
-import { Order, Production, StockMovement } from '../server/db.js';
+import { AuditLog, Order, Production, StockMovement } from '../server/db.js';
 import orderArchiveRoutes from '../server/routes/orderArchives.js';
 
 jest.mock('../server/utils.js', () => ({
   safeText: value => typeof value === 'string' ? value : '',
-  serializeOrder: order => order.serialize(),
+  serializeOrder: order => typeof order.serialize === 'function'
+    ? order.serialize()
+    : { ...order, id: order.id || order.orderId },
   uploadDesignFile: jest.fn()
 }));
 
@@ -24,6 +26,11 @@ const users = {
 };
 const auth = token => ({ Authorization: `Bearer ${token}` });
 const makeOrderId = value => `ORD-ARCH-${value}`;
+const binaryResponseParser = (response, callback) => {
+  const chunks = [];
+  response.on('data', chunk => chunks.push(chunk));
+  response.on('end', () => callback(null, Buffer.concat(chunks)));
+};
 
 async function seedFinalizedOrder(suffix, options = {}) {
   const orderId = makeOrderId(suffix);
@@ -89,7 +96,14 @@ async function seedFinalizedOrder(suffix, options = {}) {
 
 beforeAll(async () => {
   replicaSet = await MongoMemoryReplSet.create({ replSet: { count: 1 } });
-  await mongoose.connect(replicaSet.getUri());
+  try {
+    await mongoose.connect(replicaSet.getUri(), { dbName: 'bm_archive_test' });
+    if (mongoose.connection.name !== 'bm_archive_test') throw new Error('Archive tests did not connect to the disposable test database.');
+  } catch (error) {
+    await replicaSet.stop().catch(() => {});
+    replicaSet = null;
+    throw error;
+  }
   originalFetch = global.fetch;
   oldUrl = process.env.SUPABASE_URL;
   oldKey = process.env.SUPABASE_ANON_KEY;
@@ -109,11 +123,16 @@ afterAll(async () => {
   global.fetch = originalFetch;
   if (oldUrl === undefined) delete process.env.SUPABASE_URL; else process.env.SUPABASE_URL = oldUrl;
   if (oldKey === undefined) delete process.env.SUPABASE_ANON_KEY; else process.env.SUPABASE_ANON_KEY = oldKey;
-  await mongoose.disconnect();
-  await replicaSet.stop();
+  if (mongoose.connection.readyState !== 0) await mongoose.disconnect();
+  if (replicaSet) {
+    const server = replicaSet;
+    replicaSet = null;
+    await server.stop();
+  }
 });
 
 beforeEach(async () => {
+  if (mongoose.connection.name !== 'bm_archive_test') throw new Error('Refusing to clear collections outside the disposable archive test database.');
   await Promise.all(Object.values(mongoose.connection.collections).map(collection => collection.deleteMany({})));
 });
 
@@ -122,6 +141,7 @@ describe('Phase 6 order archive and completion reports', () => {
     const { orderId } = await seedFinalizedOrder('SECURITY');
     for (const token of ['customer', 'staff']) {
       expect((await request(app).post(`/api/admin/orders/${orderId}/archive`).set(auth(token))).status).toBe(403);
+      expect((await request(app).post(`/api/admin/orders/${orderId}/restore`).set(auth(token))).status).toBe(403);
       expect((await request(app).get('/api/admin/archived-orders').set(auth(token))).status).toBe(403);
       expect((await request(app).get('/api/admin/reports/completed-orders?from=2026-10-01&to=2026-10-31').set(auth(token))).status).toBe(403);
     }
@@ -143,6 +163,28 @@ describe('Phase 6 order archive and completion reports', () => {
     expect((await request(app).post(`/api/admin/orders/${notPickedUp.orderId}/archive`).set(auth('admin'))).status).toBe(409);
   });
 
+  it('rolls back archive metadata when the audit write fails inside the transaction', async () => {
+    const { orderId } = await seedFinalizedOrder('ROLLBACK');
+    const originalCreate = AuditLog.create.bind(AuditLog);
+    const auditWrite = jest.spyOn(AuditLog, 'create').mockImplementationOnce(async (...args) => {
+      await originalCreate(...args);
+      throw new Error('injected audit write failure');
+    });
+    const expectedError = jest.spyOn(console, 'error').mockImplementation(() => {});
+
+    try {
+      const response = await request(app).post(`/api/admin/orders/${orderId}/archive`).set(auth('admin'));
+      expect(response.status).toBe(503);
+    } finally {
+      auditWrite.mockRestore();
+      expectedError.mockRestore();
+    }
+
+    const order = await Order.findOne({ orderId }).lean();
+    expect(order.archived).toBe(false);
+    expect(await AuditLog.countDocuments({ action: 'ARCHIVE_ORDER', resourceId: orderId })).toBe(0);
+  });
+
   it('archives the original order once and preserves joined payment, production and movement history', async () => {
     const { orderId } = await seedFinalizedOrder('VALID');
     const archived = await request(app).post(`/api/admin/orders/${orderId}/archive`).set(auth('admin'));
@@ -151,8 +193,22 @@ describe('Phase 6 order archive and completion reports', () => {
     expect(archived.body.order.archivedAt).toBeTruthy();
     expect(archived.body.order.archivedBy).toBe('admin-a');
     expect((await Order.countDocuments({ orderId }))).toBe(1);
+    const archiveEvents = await AuditLog.find({ action: 'ARCHIVE_ORDER', resourceId: orderId }).lean();
+    expect(archiveEvents).toHaveLength(1);
+    expect(archiveEvents[0]).toMatchObject({
+      userId: 'admin-a',
+      userName: 'admin',
+      role: 'admin',
+      module: 'Orders',
+      resourceType: 'Order',
+      previousValue: { archived: false, status: 'Picked Up' },
+      newValue: { archived: true, status: 'Picked Up', archivedBy: 'admin-a', archivedByName: 'admin' },
+      metadata: { orderId, jobOrderId: 'JO-ARCH-VALID' }
+    });
+    expect(archiveEvents[0].timestamp.getTime()).toBe(new Date(archived.body.order.archivedAt).getTime());
 
     expect((await request(app).post(`/api/admin/orders/${orderId}/archive`).set(auth('admin'))).status).toBe(409);
+    expect(await AuditLog.countDocuments({ action: 'ARCHIVE_ORDER', resourceId: orderId })).toBe(1);
     const archivedOrders = await request(app).get('/api/admin/archived-orders').set(auth('admin'));
     expect(archivedOrders.body.orders.map(order => order.id)).toContain(orderId);
     const detail = await request(app).get(`/api/admin/archived-orders/${orderId}`).set(auth('admin'));
@@ -161,6 +217,19 @@ describe('Phase 6 order archive and completion reports', () => {
     expect(detail.body.job.jobOrderId).toBe('JO-ARCH-VALID');
     expect(detail.body.movements).toHaveLength(1);
     expect(detail.body.order.status).toBe('Picked Up');
+  });
+
+  it('restores an archived order without deleting its history and records the restore audit event', async () => {
+    const { orderId } = await seedFinalizedOrder('RESTORE');
+    expect((await request(app).post(`/api/admin/orders/${orderId}/archive`).set(auth('admin'))).status).toBe(200);
+
+    const restored = await request(app).post(`/api/admin/orders/${orderId}/restore`).set(auth('admin'));
+    expect(restored.status).toBe(200);
+    expect(restored.body.order.archived).toBe(false);
+    expect(await Order.countDocuments({ orderId })).toBe(1);
+    expect(await Production.countDocuments({ orderId })).toBe(1);
+    expect(await StockMovement.countDocuments({ orderId })).toBe(1);
+    expect(await AuditLog.countDocuments({ action: 'RESTORE_ORDER', resourceId: orderId, userId: 'admin-a' })).toBe(1);
   });
 
   it('filters by production completion date, returns each order once, and exports actual XLSX totals', async () => {
@@ -180,7 +249,11 @@ describe('Phase 6 order archive and completion reports', () => {
     expect(outside.body.completedOrders).toBe(0);
     expect(outside.body.rows).toHaveLength(0);
 
-    const exported = await request(app).get('/api/admin/reports/completed-orders/export?from=2026-10-01&to=2026-10-31').set(auth('admin'));
+    const exported = await request(app)
+      .get('/api/admin/reports/completed-orders/export?from=2026-10-01&to=2026-10-31')
+      .set(auth('admin'))
+      .buffer(true)
+      .parse(binaryResponseParser);
     expect(exported.status).toBe(200);
     expect(exported.headers['content-type']).toContain('spreadsheetml.sheet');
     expect(exported.headers['content-disposition']).toContain('BM_Printing_Completed_Orders_2026-10-01_to_2026-10-31.xlsx');

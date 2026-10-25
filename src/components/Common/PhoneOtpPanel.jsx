@@ -1,8 +1,8 @@
 import { requestPhoneOtp, verifyPhoneOtp } from '../../utils/authActions';
 import { PHONE_OTP_ERRORS, PHONE_OTP_RESEND_SECONDS } from '../../utils/phoneAuth';
-import { turnstileStatusMessage, verifyTurnstileToken } from '../../utils/turnstile';
-import { TurnstileWidget } from '../Common/TurnstileWidget';
 import React, { useEffect, useRef, useState } from 'react';
+import { TurnstileWidget } from './TurnstileWidget';
+import { requireTurnstileToken } from '../../utils/turnstile';
 
 // Shared Phone/SMS OTP panel for Login and Register. Supabase verifies every
 // code; nothing here stores or inspects the OTP beyond handing it back once.
@@ -14,10 +14,10 @@ export const PhoneOtpPanel = ({ onAuthenticated, showToast }) => {
   const [errorMessage, setErrorMessage] = useState('');
   const [busy, setBusy] = useState(false);
   const [cooldown, setCooldown] = useState(0);
-  const [turnstileToken, setTurnstileToken] = useState('');
-  const [turnstileStatus, setTurnstileStatus] = useState('loading');
-  const [turnstileResetSignal, setTurnstileResetSignal] = useState(0);
   const cooldownTimer = useRef(null);
+  const [captchaToken, setCaptchaToken] = useState('');
+  const [captchaStatus, setCaptchaStatus] = useState('loading');
+  const [captchaReset, setCaptchaReset] = useState(0);
 
   useEffect(() => {
     if (cooldown <= 0) return undefined;
@@ -25,27 +25,16 @@ export const PhoneOtpPanel = ({ onAuthenticated, showToast }) => {
     return () => clearTimeout(cooldownTimer.current);
   }, [cooldown]);
 
-  // Reuses the existing server-side Turnstile check to limit OTP abuse.
-  const guardTurnstile = async () => {
-    if (!turnstileToken) {
-      throw new Error(turnstileStatusMessage(turnstileStatus));
-    }
-    try {
-      await verifyTurnstileToken(turnstileToken);
-    } finally {
-      setTurnstileToken('');
-      setTurnstileResetSignal(signal => signal + 1);
-    }
-  };
-
   const sendOtp = async () => {
     setErrorMessage('');
     if (busy || cooldown > 0) return;
+    let securityToken;
+    try { securityToken = requireTurnstileToken(captchaToken, captchaStatus); }
+    catch (error) { setErrorMessage(error.message); showToast?.(error.message, 'error'); return; }
     setBusy(true);
     try {
-      await guardTurnstile();
       const { supabase } = await import('../../utils/supabaseClient');
-      const e164 = await requestPhoneOtp(supabase, phone);
+      const e164 = await requestPhoneOtp(supabase, phone, securityToken);
       setSentTo(e164);
       setStage('code');
       setCooldown(PHONE_OTP_RESEND_SECONDS);
@@ -55,6 +44,8 @@ export const PhoneOtpPanel = ({ onAuthenticated, showToast }) => {
       setErrorMessage(message);
       showToast?.(message, 'error');
     } finally {
+      setCaptchaToken('');
+      setCaptchaReset(value => value + 1);
       setBusy(false);
     }
   };
@@ -129,14 +120,7 @@ export const PhoneOtpPanel = ({ onAuthenticated, showToast }) => {
         )}
       </div>
 
-      {stage === 'phone' && (
-        <TurnstileWidget
-          resetSignal={turnstileResetSignal}
-          onTokenChange={setTurnstileToken}
-          onStatusChange={setTurnstileStatus}
-        />
-      )}
-
+      {stage === 'phone' && <TurnstileWidget resetSignal={captchaReset} onTokenChange={setCaptchaToken} onStatusChange={setCaptchaStatus} />}
       {errorMessage && <p className="bm-auth-error" role="alert">{errorMessage}</p>}
 
       {stage === 'phone' ? (

@@ -8,7 +8,8 @@ import './StaffMessages.css';
 const date = value => (value ? new Date(value).toLocaleString('en-PH') : 'Not recorded');
 
 const SENDER_LABELS = { guest: 'Guest', customer: 'Customer' };
-const STATUS_LABELS = { new: 'New', read: 'Read', resolved: 'Resolved' };
+const STATUS_LABELS = { new: 'Open', read: 'Open', awaiting_staff: 'Awaiting Staff', awaiting_customer: 'Awaiting Customer', resolved: 'Resolved' };
+const statusLabel = status => STATUS_LABELS[status] || status;
 
 const SenderBadge = ({ type }) => (
   <span className={`bm-msg-badge bm-msg-badge--${type === 'customer' ? 'customer' : 'guest'}`}>
@@ -17,7 +18,7 @@ const SenderBadge = ({ type }) => (
 );
 
 const StatusBadge = ({ status }) => (
-  <span className={`bm-msg-badge bm-msg-badge--${status}`}>{STATUS_LABELS[status] || status}</span>
+  <span className={`bm-msg-badge bm-msg-badge--${status}`}>{statusLabel(status)}</span>
 );
 
 export function StaffMessages({ user, showToast }) {
@@ -31,6 +32,9 @@ export function StaffMessages({ user, showToast }) {
   const [busy, setBusy] = useState(false);
   const [actionError, setActionError] = useState('');
   const [refresh, setRefresh] = useState(0);
+  const [replyText, setReplyText] = useState('');
+  const [internalText, setInternalText] = useState('');
+  const [requestId, setRequestId] = useState('');
 
   useEffect(() => {
     let active = true, pending = false;
@@ -78,6 +82,23 @@ export function StaffMessages({ user, showToast }) {
     }
   };
 
+  const sendReply = async internalOnly => {
+    const text = (internalOnly ? internalText : replyText).trim();
+    if (!selected || !text || busy) return;
+    const stableId = requestId || crypto.randomUUID();
+    setRequestId(stableId); setBusy(true); setActionError('');
+    try {
+      const route = internalOnly ? 'internal-notes' : 'replies';
+      const data = await orderApi(`/api/staff/messages/${encodeURIComponent(selected.id)}/${route}`, { method: 'POST', body: JSON.stringify({ requestId: stableId, message: text }) }, user);
+      setMessages(list => list.map(item => item.id === data.message.id ? data.message : item));
+      if (internalOnly) setInternalText(''); else setReplyText('');
+      setRequestId('');
+      showToast?.(internalOnly ? 'Internal follow-up note saved.' : 'Reply sent.', 'success');
+      setRefresh(n => n + 1);
+    } catch (e) { setActionError(e.message); }
+    finally { setBusy(false); }
+  };
+
   const shown = messages
     .filter(m => (statusFilter === 'All' || m.status === statusFilter)
       && [m.senderName, m.senderEmail, m.subject, m.message]
@@ -97,8 +118,8 @@ export function StaffMessages({ user, showToast }) {
           onChange={e => setSearch(e.target.value)}
         />
         <select aria-label="Filter by status" value={statusFilter} onChange={e => setStatusFilter(e.target.value)}>
-          {['All', 'new', 'read', 'resolved'].map(s => (
-            <option key={s} value={s}>{s === 'All' ? 'All' : STATUS_LABELS[s]}</option>
+          {['All', 'new', 'read', 'awaiting_staff', 'awaiting_customer', 'resolved'].map(s => (
+            <option key={s} value={s}>{s === 'All' ? 'All' : statusLabel(s)}</option>
           ))}
         </select>
         <Btn onClick={() => setRefresh(n => n + 1)}>Refresh</Btn>
@@ -151,12 +172,30 @@ export function StaffMessages({ user, showToast }) {
             {/* Rendered as a text node. Customer HTML is never interpreted. */}
             <h4>Message</h4>
             <p className="bm-msg-full">{selected.message}</p>
+            <h4>Conversation</h4>
+            <div className="bm-inquiry-thread" aria-live="polite">
+              {!selected.replies?.length && <p className="bm-inquiry-empty">No replies yet.</p>}
+              {(selected.replies || []).map(reply => <article key={reply.replyId} className="bm-inquiry-entry">
+                <header><strong>{reply.authorName}</strong><span>{reply.authorRole === 'admin' ? 'Admin' : reply.authorRole === 'staff' ? 'Staff' : 'Customer'}</span><time>{date(reply.createdAt)}</time></header>
+                <p>{reply.message}</p>
+              </article>)}
+            </div>
+            {selected.senderType === 'guest' ? <>
+              <label className="bm-inquiry-label">Internal follow-up note <span>Visible to authorized Staff/Admin only. This is not sent to the guest.</span>
+                <textarea value={internalText} maxLength={3000} rows={3} onChange={event => setInternalText(event.target.value)} placeholder="Record an internal call or follow-up plan" />
+              </label>
+              <Btn disabled={busy || !internalText.trim()} loading={busy} onClick={() => sendReply(true)}>Save Internal Note</Btn>
+            </> : <label className="bm-inquiry-label">Reply to customer
+              <textarea value={replyText} maxLength={3000} rows={3} onChange={event => setReplyText(event.target.value)} placeholder="Write a reply" />
+              <Btn disabled={busy || !replyText.trim()} loading={busy} onClick={() => sendReply(false)}>Send Reply</Btn>
+            </label>}
+            {(selected.internalNotes || []).length > 0 && <><h4>Internal follow-up notes</h4><div className="bm-inquiry-thread">{selected.internalNotes.map(note => <article key={note.noteId} className="bm-inquiry-entry bm-inquiry-entry--internal"><header><strong>{note.authorName}</strong><span>{note.authorRole === 'admin' ? 'Admin' : 'Staff'} · Internal</span><time>{date(note.createdAt)}</time></header><p>{note.message}</p></article>)}</div></>}
             {actionError && <p role="alert" className="bm-order-error">{actionError}</p>}
             <div className="bm-order-toolbar">
-              {selected.status === 'new' && <Btn disabled={busy} loading={busy} onClick={() => setStatus('read')}>Mark as Read</Btn>}
+              {['new', 'awaiting_staff'].includes(selected.status) && <Btn disabled={busy} loading={busy} onClick={() => setStatus('read')}>Mark as Read</Btn>}
               {selected.status !== 'resolved' && <Btn variant="secondary" disabled={busy} loading={busy} onClick={() => setStatus('resolved')}>Mark as Resolved</Btn>}
-              {selected.status === 'resolved' && <Btn variant="ghost" disabled={busy} loading={busy} onClick={() => setStatus('read')}>Reopen as Read</Btn>}
-              <Btn variant="ghost" disabled={busy} onClick={() => setSelectedId(null)}>Close</Btn>
+              {selected.status === 'resolved' && <Btn variant="ghost" disabled={busy} loading={busy} onClick={() => setStatus('read')}>Reopen</Btn>}
+              <Btn variant="ghost" disabled={busy} onClick={() => { setSelectedId(null); setRequestId(''); setReplyText(''); setInternalText(''); }}>Close</Btn>
             </div>
           </>
         )}

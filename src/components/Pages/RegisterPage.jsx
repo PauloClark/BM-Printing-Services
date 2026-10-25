@@ -4,19 +4,16 @@ import React, { useState } from 'react';
 import { supabaseAppUser } from '../../../shared/roles';
 import { store } from '../../utils/storage';
 import { GoogleAuthOption } from '../Common/GoogleAuthOption';
-import { PhoneOtpPanel } from '../Common/PhoneOtpPanel';
-import { TurnstileWidget } from '../Common/TurnstileWidget';
-import { turnstileStatusMessage, verifyTurnstileToken } from '../../utils/turnstile';
 import './AuthPages.css';
 import { publicAsset } from '../../utils/assets';
 import { BMLogo } from '../Common/BMLogo';
+import { TurnstileWidget } from '../Common/TurnstileWidget';
+import { requireTurnstileToken } from '../../utils/turnstile';
 
 export const RegisterPage = ({ setPage, onLogin, showToast: notify }) => {
-  const [method, setMethod] = useState('email');
   const [form, setForm] = useState({
     name: '',
     email: '',
-    phone: '',
     password: '',
     confirmPassword: ''
   });
@@ -24,20 +21,9 @@ export const RegisterPage = ({ setPage, onLogin, showToast: notify }) => {
   const [errorMessage, setErrorMessage] = useState('');
   const [loading, setLoading] = useState(false);
   const [googleLoading, setGoogleLoading] = useState(false);
-  const [turnstileToken, setTurnstileToken] = useState('');
-  const [turnstileStatus, setTurnstileStatus] = useState('loading');
-  const [turnstileResetSignal, setTurnstileResetSignal] = useState(0);
-
-  const verifySecurity = async () => {
-    if (!turnstileToken) throw new Error(turnstileStatusMessage(turnstileStatus));
-    try {
-      await verifyTurnstileToken(turnstileToken);
-    } finally {
-      setTurnstileToken('');
-      setTurnstileResetSignal(signal => signal + 1);
-    }
-  };
-
+  const [captchaToken, setCaptchaToken] = useState('');
+  const [captchaStatus, setCaptchaStatus] = useState('loading');
+  const [captchaReset, setCaptchaReset] = useState(0);
   const onChange = (e) => {
     const { name, value } = e.target;
     setErrorMessage('');
@@ -57,12 +43,14 @@ export const RegisterPage = ({ setPage, onLogin, showToast: notify }) => {
       notify?.('Passwords do not match.', 'error');
       return;
     }
+    let token;
+    try { token = requireTurnstileToken(captchaToken, captchaStatus); }
+    catch (error) { setErrorMessage(error.message); notify?.(error.message, 'error'); return; }
 
     setLoading(true);
     try {
-      await verifySecurity();
       const { supabase } = await import('../../utils/supabaseClient');
-      const data = await registerCustomer(supabase, form, authCallbackUrl());
+      const data = await registerCustomer(supabase, form, authCallbackUrl(), token);
       await store.del('session');
       if (data.session && data.user) {
         onLogin?.(supabaseAppUser(data.user));
@@ -77,6 +65,8 @@ export const RegisterPage = ({ setPage, onLogin, showToast: notify }) => {
       setErrorMessage(message);
       notify?.(message, 'error');
     } finally {
+      setCaptchaToken('');
+      setCaptchaReset(value => value + 1);
       setLoading(false);
     }
   };
@@ -99,41 +89,7 @@ export const RegisterPage = ({ setPage, onLogin, showToast: notify }) => {
           <p>Create your BM Printing Services account</p>
         </header>
 
-        <div className="bm-auth-tabs" role="tablist" aria-label="Registration method">
-          <button
-            type="button"
-            role="tab"
-            id="bm-register-tab-email"
-            aria-selected={method === 'email'}
-            aria-controls="bm-register-panel"
-            className={`bm-auth-tab${method === 'email' ? ' is-active' : ''}`}
-            onClick={() => setMethod('email')}
-          >
-            Email
-          </button>
-          <button
-            type="button"
-            role="tab"
-            id="bm-register-tab-phone"
-            aria-selected={method === 'phone'}
-            aria-controls="bm-register-panel"
-            className={`bm-auth-tab${method === 'phone' ? ' is-active' : ''}`}
-            onClick={() => setMethod('phone')}
-          >
-            Phone
-          </button>
-        </div>
-
-        <div id="bm-register-panel" role="tabpanel" aria-labelledby={`bm-register-tab-${method}`}>
-        {method === 'phone' ? (
-          <PhoneOtpPanel
-            showToast={notify}
-            onAuthenticated={user => {
-              onLogin?.(user);
-            }}
-          />
-        ) : (
-        <>
+        <div id="bm-register-panel">
         <div className="bm-auth-fields">
           <div className="bm-auth-field">
             <label htmlFor="bm-register-name">Full Name</label>
@@ -142,10 +98,6 @@ export const RegisterPage = ({ setPage, onLogin, showToast: notify }) => {
           <div className="bm-auth-field">
             <label htmlFor="bm-register-email">Email Address</label>
             <input id="bm-register-email" className="bm-auth-input" name="email" type="email" value={form.email} onChange={onChange} autoComplete="email" required />
-          </div>
-          <div className="bm-auth-field">
-            <label htmlFor="bm-register-phone">Phone</label>
-            <input id="bm-register-phone" className="bm-auth-input" name="phone" type="tel" value={form.phone} onChange={onChange} autoComplete="tel" required />
           </div>
           <div className="bm-auth-field">
             <label htmlFor="bm-register-password">Password</label>
@@ -175,12 +127,7 @@ export const RegisterPage = ({ setPage, onLogin, showToast: notify }) => {
           </div>
         </div>
 
-        <TurnstileWidget
-          resetSignal={turnstileResetSignal}
-          onTokenChange={setTurnstileToken}
-          onStatusChange={setTurnstileStatus}
-        />
-
+        <TurnstileWidget resetSignal={captchaReset} onTokenChange={setCaptchaToken} onStatusChange={setCaptchaStatus} />
         {errorMessage && <p className="bm-auth-error" role="alert">{errorMessage}</p>}
 
         <button
@@ -195,13 +142,10 @@ export const RegisterPage = ({ setPage, onLogin, showToast: notify }) => {
           {!loading && <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true"><path d="M4 12h15M13 5l7 7-7 7" /></svg>}
         </button>
 
-        </>
-        )}
         </div>
 
         <GoogleAuthOption
           disabled={loading}
-          verifySecurity={verifySecurity}
           onLoadingChange={setGoogleLoading}
           onError={error => notify?.(error.message || 'Unable to connect with Google. Please try again.', 'error')}
         />

@@ -1,7 +1,7 @@
 import { authCallbackUrl } from '../../utils/authReturn';
 import { useState } from 'react';
 
-export const GoogleAuthOption = ({ disabled = false, onLoadingChange, onError, verifySecurity }) => {
+export const GoogleAuthOption = ({ disabled = false, onLoadingChange, onError }) => {
   const [loading, setLoading] = useState(false);
 
   const startGoogleSignIn = async () => {
@@ -10,7 +10,6 @@ export const GoogleAuthOption = ({ disabled = false, onLoadingChange, onError, v
     onLoadingChange?.(true);
 
     try {
-      await verifySecurity();
       const { supabase } = await import('../../utils/supabaseClient');
       const { error } = await supabase.auth.signInWithOAuth({
         provider: 'google',

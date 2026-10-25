@@ -1,19 +1,16 @@
 import { supabaseAppUser } from '../../shared/roles';
 import { normalizePhoneNumber, phoneOtpErrorMessage, PHONE_OTP_ERRORS } from './phoneAuth';
 
-export async function signInAccount(client, email, password, legacyLogin) {
-  const { data, error } = await client.auth.signInWithPassword({ email: email.trim(), password });
+export async function signInAccount(client, email, password, captchaToken) {
+  const { data, error } = await client.auth.signInWithPassword({ email: email.trim(), password, options: { captchaToken } });
   if (!error && data.user) return supabaseAppUser(data.user);
-  // Only legacy credentials may fall back. Never bypass MFA, unconfirmed email,
-  // rate limits or a provider outage via the compatibility endpoint.
-  if (error?.code !== 'invalid_credentials' || !legacyLogin) throw error || new Error('Unable to login.');
-  return legacyLogin();
+  throw error || new Error('Unable to login.');
 }
 
-export async function registerCustomer(client, form, redirectTo) {
+export async function registerCustomer(client, form, redirectTo, captchaToken) {
   const { data, error } = await client.auth.signUp({
     email: form.email.trim(), password: form.password,
-    options: { emailRedirectTo: redirectTo,
+    options: { emailRedirectTo: redirectTo, captchaToken,
       data: { full_name: form.name.trim(), phone: (form.phone || '').trim() } }
   });
   if (error) throw error;
@@ -23,13 +20,13 @@ export async function registerCustomer(client, form, redirectTo) {
 // Supabase Phone Auth. GoTrue generates, expires and verifies the OTP; the code
 // is never created, stored or checked in the browser. Returns the E.164 number
 // actually sent so the UI can display exactly what the provider received.
-export async function requestPhoneOtp(client, rawPhone) {
+export async function requestPhoneOtp(client, rawPhone, captchaToken) {
   const normalized = normalizePhoneNumber(rawPhone);
   if (!normalized.ok) throw new Error(PHONE_OTP_ERRORS.invalidPhone);
 
   const { error } = await client.auth.signInWithOtp({
     phone: normalized.e164,
-    options: { shouldCreateUser: true }
+    options: { shouldCreateUser: true, captchaToken }
   });
   if (error) throw new Error(phoneOtpErrorMessage(error, 'send'));
 

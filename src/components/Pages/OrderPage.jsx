@@ -1,3 +1,7 @@
+import { OrderReference } from '../Common/OrderReference';
+import { specificationConfigFor, validateSpecifications } from '../../../shared/productSpecifications';
+import { watchCatalog } from '../../utils/watchCatalog';
+import { productAvailability } from '../../../shared/productStock';
 import { useState, useRef, useEffect, useId } from "react";
 import { C } from "../../constants/colors";
 import { PRODUCTS } from "../../constants/products";
@@ -26,7 +30,7 @@ const ORDER_STEPS = [
   { title: "Payment & Review", detail: "Confirm and place your order" }
 ];
 const OrderIcon = ({ name }) => <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-  {name === "user" ? <><circle cx="12" cy="8" r="4"/><path d="M4 21v-2a8 8 0 0 1 16 0v2"/></> : name === "check" ? <path d="m5 12 4 4L19 6"/> : <><rect x="5" y="10" width="14" height="11" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3M12 14v3"/></>}
+  {name === "user" ? <><circle cx="12" cy="8" r="4"/><path d="M4 21v-2a8 8 0 0 1 16 0v2"/></> : name === "check" ? <path d="m5 12 4 4L19 6"/> : name === "arrow-left" ? <><path d="M19 12H5"/><path d="m12 19-7-7 7-7"/></> : name === "arrow-right" ? <><path d="M5 12h14"/><path d="m12 5 7 7-7 7"/></> : <><rect x="5" y="10" width="14" height="11" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3M12 14v3"/></>}
 </svg>;
 // Local labeled controls keep the existing value/onChange contract.
 const Input = ({ label, type, value, onChange, placeholder, required, options, rows }) => {
@@ -55,91 +59,8 @@ const REMOVED_PRODUCT_NAMES = new Set([
   "Keychain / Button Pin"
 ]);
 
-const CLOTHING_SIZES = ["XS", "Small", "Medium", "Large", "XL", "2XL", "3XL", "4XL", "5XL"];
-const HOODIE_SIZES = CLOTHING_SIZES.slice(1);
-const SPECIFICATION_CONFIG = {
-  clothing: {
-    fields: [
-      { key: "size", label: "Size", type: "select", options: CLOTHING_SIZES, required: true },
-      { key: "color", label: "Color", required: true, placeholder: "e.g. Black" }
-    ],
-    uploadLabel: "Upload Design / Reference",
-    required: ["size", "color"]
-  },
-  hoodie: {
-    fields: [
-      { key: "size", label: "Size", type: "select", options: HOODIE_SIZES, required: true },
-      { key: "color", label: "Color", required: true, placeholder: "e.g. Black" }
-    ],
-    uploadLabel: "Upload Design / Reference",
-    required: ["size", "color"]
-  },
-  schoolId: {
-    fields: [
-      { key: "studentName", label: "Customer / Student Name", placeholder: "Name to print on the ID" },
-      { key: "idStyle", label: "ID / Lanyard Details", placeholder: "e.g. PVC ID, preferred lanyard design" },
-      { key: "lanyardColor", label: "Preferred Lanyard Color" }
-    ],
-    uploadLabel: "Upload Photo / Design Reference",
-    required: []
-  },
-  banner: {
-    fields: [
-      { key: "width", label: "Width", type: "number", min: "0.1", step: "any", required: true },
-      { key: "height", label: "Height", type: "number", min: "0.1", step: "any", required: true },
-      { key: "unit", label: "Unit", type: "select", options: ["cm", "inches", "feet", "meters"], required: true },
-      { key: "orientation", label: "Orientation", type: "select", options: ["Portrait", "Landscape"] }
-    ],
-    uploadLabel: "Upload Design / Reference",
-    required: ["width", "height", "unit"]
-  },
-  mug: {
-    fields: [
-      { key: "mugVariant", label: "Mug Color / Variant", type: "select", options: ["White", "Black", "Color-changing", "Other"] }
-    ],
-    uploadLabel: "Upload Design / Reference",
-    required: []
-  },
-  sticker: {
-    fields: [
-      { key: "width", label: "Width", type: "number", min: "0.1", step: "any", required: true },
-      { key: "height", label: "Height", type: "number", min: "0.1", step: "any", required: true },
-      { key: "unit", label: "Unit", type: "select", options: ["mm", "cm", "inches"], required: true }
-    ],
-    uploadLabel: "Upload Design / Reference",
-    required: ["width", "height", "unit"]
-  },
-  backdrop: {
-    fields: [
-      { key: "width", label: "Width", type: "number", min: "0.1", step: "any", required: true },
-      { key: "height", label: "Height", type: "number", min: "0.1", step: "any", required: true },
-      { key: "unit", label: "Unit", type: "select", options: ["cm", "inches", "feet", "meters"], required: true }
-    ],
-    uploadLabel: "Upload Design / Reference",
-    required: ["width", "height", "unit"]
-  },
-  general: {
-    fields: [],
-    uploadLabel: "Upload Design / Reference",
-    required: []
-  }
-};
-
-const getSpecificationType = product => {
-  if (product?.specificationType && SPECIFICATION_CONFIG[product.specificationType]) return product.specificationType;
-  const name = product?.name?.toLowerCase() || "";
-  if (name.includes("school id")) return "schoolId";
-  if (/hoodie|jacket/.test(name)) return "hoodie";
-  if (/t-shirt|polo shirt/.test(name)) return "clothing";
-  if (name.includes("mug")) return "mug";
-  if (name.includes("sticker")) return "sticker";
-  if (name.includes("event backdrop") || name.includes("streamer")) return "backdrop";
-  if (name.includes("banner") || name.includes("poster")) return "banner";
-  return "general";
-};
-
-const IMAGE_TYPES = new Set(["image/jpeg", "image/png", "image/webp"]);
-const IMAGE_EXTENSIONS = /\.(jpe?g|png|webp)$/i;
+const IMAGE_TYPES = new Set(["image/jpeg", "image/png", "image/webp", "application/pdf"]);
+const IMAGE_EXTENSIONS = /\.(jpe?g|png|webp|pdf)$/i;
 const MAX_DESIGN_FILE_SIZE = 10 * 1024 * 1024;
 
 const SpecificationField = ({ field, value, onChange, error }) => (
@@ -187,21 +108,21 @@ const isProductImage = source =>
 
 const normalizePhone = value => value.replace(/[\s()-]/g, "");
 
-const validateCustomerInfo = (form, fulfillmentMethod) => {
+const validateCustomerInfo = (form, fulfillmentMethod, walkIn = false) => {
   const errors = {};
   const name = form.name.trim().replace(/\s+/g, " ");
   const email = form.email.trim();
   const phone = normalizePhone(form.phone);
 
   if (!name) errors.name = "Enter your full name.";
-  if (!email) {
+  if (!email && !walkIn) {
     errors.email = "Enter your email address.";
-  } else if (!/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email)) {
+  } else if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email)) {
     errors.email = "Enter a valid email address, such as juan@email.com.";
   }
-  if (!phone) {
+  if (!phone && !walkIn) {
     errors.phone = "Enter your Philippine mobile number.";
-  } else if (!/^(09\d{9}|\+639\d{9})$/.test(phone)) {
+  } else if (phone && !/^(09\d{9}|\+639\d{9})$/.test(phone)) {
     errors.phone = "Use a Philippine mobile number like 09XXXXXXXXX or +639XXXXXXXXX.";
   }
   if (fulfillmentMethod === "delivery" && !form.address.trim()) {
@@ -249,7 +170,7 @@ const CustomerField = ({
   </div>
 );
 
-export const OrderPage = ({ user, selectedProduct, setPage, addOrder, showToast }) => {
+export const OrderPage = ({ user, selectedProduct, setPage, addOrder, showToast, walkIn = false }) => {
   const [step, setStep] = useState(1);
   const [loading, setLoading] = useState(false);
   const [confirmed, setConfirmed] = useState(false);
@@ -264,23 +185,23 @@ export const OrderPage = ({ user, selectedProduct, setPage, addOrder, showToast 
       previousStepRef.current = step;
     }
   }, [step]);
-  const [fulfillmentMethod, setFulfillmentMethod] = useState("delivery");
+  const [fulfillmentMethod, setFulfillmentMethod] = useState("pickup");
   const [step1Errors, setStep1Errors] = useState({});
   const [catalogProducts, setCatalogProducts] = useState([]);
   const [step2Attempted, setStep2Attempted] = useState(false);
   const [specificationErrors, setSpecificationErrors] = useState({});
   const [form, setForm] = useState({
-    name: user?.name || "",
-    email: user?.email || "",
-    phone: user?.phone || "",
-    address: user?.address || "",
+    name: (!walkIn && user?.name) || "",
+    email: (!walkIn && user?.email) || "",
+    phone: (!walkIn && user?.phone) || "",
+    address: (!walkIn && user?.address) || "",
     productId: selectedProduct && !REMOVED_PRODUCT_NAMES.has(selectedProduct.name) ? selectedProduct.id : "",
     quantity: 1,
     specs: "",
     specificationDetails: {},
     designFile: null,
     specialInstructions: "",
-    paymentMethod: "",
+    paymentMethod: walkIn ? "cash" : "",
     notes: ""
   });
   const [submitted, setSubmitted] = useState(null);
@@ -292,7 +213,7 @@ export const OrderPage = ({ user, selectedProduct, setPage, addOrder, showToast 
   const quantityInputRef = useRef(null);
 
   useEffect(() => {
-    if (!user) return;
+    if (!user || walkIn) return;
     setForm(current => ({
       ...current,
       name: current.name || user.name || "",
@@ -306,9 +227,7 @@ export const OrderPage = ({ user, selectedProduct, setPage, addOrder, showToast 
     let cancelled = false;
     const loadActiveProducts = async () => {
       try {
-        const response = await fetch("/api/products");
-        if (!response.ok) return;
-        const data = await response.json();
+        const data = await orderApi("/api/products", { cache: "no-store" });
         const source = catalogSource(data, PRODUCTS);
         if (!source) return;
         const activeProducts = source
@@ -325,7 +244,10 @@ export const OrderPage = ({ user, selectedProduct, setPage, addOrder, showToast 
               category: item.category || local?.category || "Printing",
               unit: item.unit || "per piece",
               image: item.image ? publicAsset(item.image) : "",
-              popular: Boolean(item.popular)
+              popular: Boolean(item.popular),
+              trackStock: Boolean(item.trackStock),
+              stock: Number(item.stock || 0),
+              lowStockThreshold: Number(item.lowStockThreshold || 0)
             };
           });
 
@@ -333,29 +255,33 @@ export const OrderPage = ({ user, selectedProduct, setPage, addOrder, showToast 
       } catch {}
     };
 
-    loadActiveProducts();
+    const stopWatching = watchCatalog(loadActiveProducts);
     return () => {
+      stopWatching();
       cancelled = true;
     };
   }, []);
 
   const product = catalogProducts.find(item => String(item.id) === String(form.productId)) ||
     catalogProducts.find(item => item.name === form.productId) || null;
-  const productSpecType = getSpecificationType(product);
-  const specificationConfig = SPECIFICATION_CONFIG[productSpecType] || SPECIFICATION_CONFIG.general;
+  const specificationConfig = specificationConfigFor(product);
   const quantityText = String(form.quantity ?? "");
   const quantityValue = Number(quantityText);
   const quantityError = !quantityText.trim()
     ? "Enter a quantity of at least 1."
     : !/^\d+$/.test(quantityText) || !Number.isSafeInteger(quantityValue)
       ? "Enter a whole-number quantity of at least 1."
-      : quantityValue < 1
-        ? "Quantity must be at least 1."
+      : quantityValue < (product?.minQty || 1)
+        ? `Quantity must be at least ${product?.minQty || 1}.`
+        : product?.trackStock && product.stock <= 0
+          ? "This product is out of stock."
+          : product?.trackStock && quantityValue > product.stock
+            ? `Only ${product.stock} item${product.stock === 1 ? '' : 's'} currently available.`
         : "";
   const total = product ? product.price * Math.max(0, quantityValue || 0) : 0;
   const selectedPaymentMethod = PAYMENT_OPTIONS.find(item => item.id === form.paymentMethod);
-  const validOrder = Boolean(user && product && !quantityError && form.designFile &&
-    Object.keys(validateCustomerInfo(form, fulfillmentMethod)).length === 0 &&
+  const validOrder = Boolean(user && product && product.active !== false && !quantityError && form.designFile &&
+    Object.keys(validateCustomerInfo(form, fulfillmentMethod, walkIn)).length === 0 &&
     specificationConfig.required.every(key => {
       const field = specificationConfig.fields.find(item => item.key === key);
       const value = String(form.specificationDetails[key] || "").trim();
@@ -373,7 +299,7 @@ export const OrderPage = ({ user, selectedProduct, setPage, addOrder, showToast 
     const nextForm = { ...form, [key]: value };
     setForm(nextForm);
     if (Object.keys(step1Errors).length > 0) {
-      setStep1Errors(validateCustomerInfo(nextForm, fulfillmentMethod));
+      setStep1Errors(validateCustomerInfo(nextForm, fulfillmentMethod, walkIn));
     }
   };
 
@@ -385,7 +311,7 @@ export const OrderPage = ({ user, selectedProduct, setPage, addOrder, showToast 
       phone: normalizePhone(form.phone),
       address: form.address.trim()
     };
-    const errors = validateCustomerInfo(normalizedForm, fulfillmentMethod);
+    const errors = validateCustomerInfo(normalizedForm, fulfillmentMethod, walkIn);
     setForm(normalizedForm);
     setStep1Errors(errors);
 
@@ -408,7 +334,7 @@ export const OrderPage = ({ user, selectedProduct, setPage, addOrder, showToast 
 
   const handleStep2Next = () => {
     setStep2Attempted(true);
-    const errors = {};
+    const errors = validateSpecifications(product, form.specificationDetails);
     if (!product) {
       productSelectRef.current?.focus();
       productSelectRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
@@ -477,9 +403,11 @@ export const OrderPage = ({ user, selectedProduct, setPage, addOrder, showToast 
       productId: product.id,
       quantity: Number(form.quantity),
       specs: orderSpecs,
+      specificationDetails: form.specificationDetails,
+      fulfillmentMethod,
       designNotes: orderSpecs,
       designFile,
-      payment: selectedPaymentMethod?.label || PAYMENT_OPTIONS.find(item => item.id === form.paymentMethod)?.label,
+      payment: selectedPaymentMethod?.backendValue,
       total,
       unitPrice: product.price,
       subtotal: total,
@@ -490,7 +418,7 @@ export const OrderPage = ({ user, selectedProduct, setPage, addOrder, showToast 
       createdAt: Date.now()
     };
     try {
-      const createdOrder = await addOrder(order);
+      const createdOrder = walkIn ? (await orderApi("/api/admin/orders/walk-in", { method: "POST", body: JSON.stringify(order) }, user)).order : await addOrder(order);
       setSubmitted(createdOrder);
     } catch (error) {
       showToast(error.message || "Unable to place your order. Please try again.", "error");
@@ -501,126 +429,37 @@ export const OrderPage = ({ user, selectedProduct, setPage, addOrder, showToast 
   };
 
   if (submitted) {
-    return (
-      <div
-        style={{
-          maxWidth: 600,
-          margin: "60px auto",
-          padding: "0 24px",
-          textAlign: "center"
-        }}
-        className="fade-in"
-      >
-        <Card>
-          <div className="bm-order-success-icon"><OrderIcon name="check"/></div>
-          <h2
-            style={{
-              fontFamily: "Montserrat",
-              fontWeight: 800,
-              fontSize: 26,
-              color: C.success,
-              marginBottom: 8
-            }}
-          >
-            Order saved — payment proof pending
-          </h2>
-          <p style={{ color: C.gray600, marginBottom: 20 }}>
-            Your order has been placed. Please use the payment details below to pay the full total and upload your proof for staff verification.
-          </p>
-          <Card
-            style={{
-              background: C.gray50,
-              textAlign: "left",
-              marginBottom: 20
-            }}
-          >
-            {[
-              ["Order ID", submitted.id],
-              ...(submitted.guestToken ? [["Private tracking code (save this)", submitted.guestToken]] : []),
-              ["Product", submitted.product],
-              ["Quantity", `${submitted.quantity} pcs`],
-              ["Payment method", submitted.payment || PAYMENT_OPTIONS.find(item => item.id === form.paymentMethod)?.label || "Awaiting selection"],
-              ["Full total", money(submitted.total ?? total)]
-            ].map(([k, v]) => (
-              <div
-                key={k}
-                style={{
-                  display: "flex",
-                  justifyContent: "space-between",
-                  marginBottom: 8,
-                  fontSize: 14
-                }}
-              >
-                <span style={{ color: C.gray600 }}>{k}</span>
-                <strong style={{ overflowWrap: "anywhere", maxWidth: "65%", textAlign: "right" }}>{v}</strong>
-              </div>
-            ))}
-            <div
-              style={{
-                display: "flex",
-                justifyContent: "space-between",
-                borderTop: `1px solid ${C.gray200}`,
-                paddingTop: 8,
-                marginTop: 4
-              }}
-            >
-              <span style={{ fontWeight: 700 }}>Total</span>
-              <strong
-                style={{
-                  color: C.red,
-                  fontFamily: "Montserrat",
-                  fontSize: 18
-                }}
-              >
-                ₱{submitted.total.toLocaleString()}
-              </strong>
-            </div>
-          </Card>
-          <Card
-            style={{
-              background: C.infoBg,
-              borderColor: C.info,
-              textAlign: "left",
-              marginBottom: 20,
-              padding: "18px 20px"
-            }}
-          >
-            <h3
-              style={{
-                fontFamily: "Montserrat",
-                fontWeight: 700,
-                marginBottom: 12,
-                color: C.info
-              }}
-            >
-              Pay the full total and upload proof
-            </h3>
-            <p style={{ fontSize: 13, color: C.info, marginBottom: 16 }}>
-              Use one of the payment methods below, then upload your payment receipt screenshot for verification. BM Printing will confirm it manually before moving the order forward.
-            </p>
-            <div style={{ display: "grid", gap: 10, alignItems: "center" }}>
-              {PAYMENT_OPTIONS.map(option => (
-                <div key={option.id} style={{ display: "grid", gap: 2, padding: "10px 12px", borderRadius: 8, background: "rgba(255,255,255,0.6)", border: "1px solid rgba(0,0,0,0.06)" }}>
-                  <strong>{option.label}</strong>
-                  <span>{option.accountName}</span>
-                  <span>{option.accountNumber}</span>
-                </div>
-              ))}
-            </div>
-          </Card>
-          <div className="order-step3__actions">
-            <Btn variant="ghost" onClick={() => setSubmitted(null)}>Return to order</Btn>
-            <Btn onClick={() => setPage("myorders")}>View My Orders</Btn>
-          </div>
-        </Card>
+    const selectedPayment = PAYMENT_OPTIONS.find(option => option.backendValue === submitted.payment) || PAYMENT_OPTIONS.find(option => option.id === submitted.payment);
+    const isCash = submitted.payment === 'cash';
+    const copy = async value => {
+      try { await navigator.clipboard.writeText(value); showToast('Order ID copied.', 'success'); }
+      catch { showToast('Unable to copy the Order ID. Please select it manually.', 'error'); }
+    };
+    const summaryRows = [
+      ['Order ID', submitted.id], ['Customer', submitted.customer], ['Product', submitted.product],
+      ['Specifications', submitted.specs || 'None recorded'], ['Quantity', submitted.quantity],
+      ['Payment method', selectedPayment?.name || submitted.payment],
+      ['Payment status', submitted.paymentStatus === 'Verified' ? 'Paid - verified by Admin' : 'Pending Payment']
+    ];
+    return <main className="bm-order-page bm-order-success-page">
+      <section className="bm-order-success-banner" aria-labelledby="order-success-title">
+        <span className="bm-order-success-check" aria-hidden="true"><OrderIcon name="check" /></span>
+        <div className="bm-order-success-copy"><p className="bm-order-eyebrow">Order confirmation</p><h1 id="order-success-title">Order Saved Successfully!</h1><p>Your order has been received and is awaiting payment verification.</p></div>
+        <div className="bm-order-success-id"><span>Order reference</span><strong>{submitted.id}</strong><button type="button" onClick={() => copy(submitted.id)}>Copy Order ID</button></div>
+      </section>
+      <div className="bm-order-success-grid">
+        <section className="bm-success-card" aria-labelledby="saved-summary-title"><div className="bm-success-card-heading"><span className="bm-success-card-kicker">01</span><div><h2 id="saved-summary-title">Order Summary</h2><p>Review the details saved to your order.</p></div></div><dl className="bm-success-summary-list">{summaryRows.map(([label, value]) => <div key={label}><dt>{label}</dt><dd>{value}</dd></div>)}<div className="bm-success-total"><dt>Total price</dt><dd>{money(submitted.total)}</dd></div></dl></section>
+        <section className="bm-success-card bm-payment-card" aria-labelledby="payment-instructions-title"><div className="bm-success-card-heading"><span className="bm-success-card-kicker">02</span><div><h2 id="payment-instructions-title">Payment Instructions</h2><p>{isCash ? 'Complete payment at the shop.' : 'Complete payment, then upload proof.'}</p></div></div>{isCash ? <div className="bm-cash-instructions"><strong>Cash - Pay at Shop</strong><p>Show your Order Reference at BM Printing Services and pay the full total in person.</p><p className="bm-payment-status"><span aria-hidden="true">&#9679;</span> Pending Payment</p></div> : <><p className="bm-payment-lead">Pay the full total and upload proof from My Orders.</p><div className="bm-payment-method-detail"><div><strong>{selectedPayment?.name || submitted.payment}</strong><span>{selectedPayment?.accountName}</span></div><div className="bm-payment-account"><strong>{selectedPayment?.accountNumber}</strong><button type="button" onClick={() => copy(selectedPayment?.accountNumber)}>Copy</button></div></div><p className="bm-payment-status"><span aria-hidden="true">&#9679;</span> Payment remains unverified until Admin confirms it.</p></>}</section>
       </div>
-    );
+      <div className="bm-order-success-actions"><Btn onClick={() => setPage(walkIn ? 'orders' : 'myorders')}>{walkIn ? 'Return to Admin Orders' : 'View My Orders'}</Btn><OrderReference order={submitted} compact /><Btn variant="ghost" onClick={() => setPage('home')}>Back to Home</Btn></div>
+      {walkIn && <p className="bm-walk-in-note">If cash was received, open this saved order in Admin Orders and confirm the amount received.</p>}
+    </main>;
   }
 
   return (
     <main className="bm-order-page">
       <header className="bm-order-intro">
-        <div><p className="bm-order-eyebrow">Custom printing made easy</p><h1>Place an Order</h1><p>Fill in the details below and we'll get started.<br/>It only takes a few minutes.</p></div>
+        <div><p className="bm-order-eyebrow">Custom printing made easy</p><h1>{walkIn ? "Create Walk-in Order" : "Place an Order"}</h1><p>Fill in the details below and we'll get started.<br/>It only takes a few minutes.</p></div>
         <div className="bm-order-art" aria-hidden="true">
           {[1, 9, 4].map(id => { const item = PRODUCTS.find(p => p.id === id); return item?.image ? <img key={id} src={item.image} alt=""/> : null; })}
           <span>Your ideas, in print.</span>
@@ -669,7 +508,7 @@ export const OrderPage = ({ user, selectedProduct, setPage, addOrder, showToast 
                 inputRef={emailInputRef}
                 onChange={e => updateStep1Field("email", e.target.value)}
                 placeholder="juan@email.com"
-                required
+                required={!walkIn}
                 error={step1Errors.email}
               />
               <CustomerField
@@ -683,7 +522,7 @@ export const OrderPage = ({ user, selectedProduct, setPage, addOrder, showToast 
                 inputRef={phoneInputRef}
                 onChange={e => updateStep1Field("phone", e.target.value.replace(/[^\d+()\s-]/g, ""))}
                 placeholder="+63 9XX XXX XXXX"
-                required
+                required={!walkIn}
                 error={step1Errors.phone}
               />
               {fulfillmentMethod === "delivery" ? (
@@ -731,8 +570,8 @@ export const OrderPage = ({ user, selectedProduct, setPage, addOrder, showToast 
               </fieldset>
               <div className="order-step1__field--wide"><Input label="Additional Notes (Optional)" type="textarea" value={form.notes} onChange={v => f("notes", v)} placeholder="Landmark, preferred delivery time, or special instructions" rows={3}/></div>
               <div className="order-step1__actions">
-                <Btn variant="ghost" onClick={() => setPage("products")}>← Back</Btn>
-                <Btn onClick={handleStep1Next}>Next Step →</Btn>
+                <Btn variant="ghost" onClick={() => setPage("products")}><OrderIcon name="arrow-left" />Back</Btn>
+                <Btn onClick={handleStep1Next}>Next Step<OrderIcon name="arrow-right" /></Btn>
               </div>
             </div>
           </div>
@@ -768,7 +607,9 @@ export const OrderPage = ({ user, selectedProduct, setPage, addOrder, showToast 
                   >
                     <option value="">Select a product</option>
                     {catalogProducts.map(item => (
-                      <option key={item.id} value={item.id}>{item.name}</option>
+                      <option key={item.id} value={item.id} disabled={item.active === false || (item.trackStock && item.stock <= 0)}>
+                        {item.name} - {productAvailability({ ...item, active: item.active !== false }).label}
+                      </option>
                     ))}
                   </select>
                   {step2Attempted && !product && (
@@ -782,7 +623,7 @@ export const OrderPage = ({ user, selectedProduct, setPage, addOrder, showToast 
                     )}
                     <div className="order-step2__product-info">
                       <strong>{product.name}</strong>
-                      <span>₱{Number(product.price).toLocaleString()} {product.unit || "per piece"}</span>
+                      <span>PHP {Number(product.price).toLocaleString()} {product.unit || "per piece"}</span>
                     </div>
                   </div>
                 )}
@@ -796,7 +637,7 @@ export const OrderPage = ({ user, selectedProduct, setPage, addOrder, showToast 
                     className="order-step2__control"
                     type="number"
                     inputMode="numeric"
-                    min={1}
+                    min={product?.minQty || 1}
                     step="1"
                     value={form.quantity}
                     onChange={event => f("quantity", event.target.value)}
@@ -830,14 +671,14 @@ export const OrderPage = ({ user, selectedProduct, setPage, addOrder, showToast 
                       id="order-design-file"
                       className="order-step2__control"
                       type="file"
-                      accept=".jpg,.jpeg,.png,.webp,image/jpeg,image/png,image/webp"
+                      accept=".jpg,.jpeg,.png,.webp,.pdf,image/jpeg,image/png,image/webp,application/pdf"
                       aria-invalid={Boolean(step2Attempted && specificationErrors.designFile)}
                       aria-describedby={step2Attempted && specificationErrors.designFile ? "order-design-file-error" : undefined}
                       onChange={event => {
                         const file = event.target.files?.[0] || null;
                         let error = "";
                         if (file && (!IMAGE_TYPES.has(file.type) || !IMAGE_EXTENSIONS.test(file.name))) {
-                          error = "Choose a JPG, JPEG, PNG, or WEBP image.";
+                          error = "Choose a JPG, JPEG, PNG, WEBP, or PDF file.";
                         } else if (file && file.size > MAX_DESIGN_FILE_SIZE) {
                           error = "The image must be 10 MB or smaller.";
                         }
@@ -870,14 +711,14 @@ export const OrderPage = ({ user, selectedProduct, setPage, addOrder, showToast 
             <section className="order-step2__total">
               <h3>Total Price</h3>
               <div>
-                <span>{product ? `₱${Number(product.price).toLocaleString()} × ${quantityText || 0} ${product.unit || "per piece"}` : "Select a product"}</span>
-                <strong>₱{total.toLocaleString()}</strong>
+                <span>{product ? `PHP ${Number(product.price).toLocaleString()} x ${quantityText || 0} ${product.unit || "per piece"}` : "Select a product"}</span>
+                <strong>PHP {total.toLocaleString()}</strong>
               </div>
             </section>
 
             <div className="order-step2__actions">
-              <Btn variant="ghost" onClick={() => setStep(1)}>← Back</Btn>
-              <Btn onClick={handleStep2Next}>Next Step →</Btn>
+              <Btn variant="ghost" onClick={() => setStep(1)}><OrderIcon name="arrow-left" />Back</Btn>
+              <Btn onClick={handleStep2Next}>Next Step<OrderIcon name="arrow-right" /></Btn>
             </div>
           </div>
         )}
@@ -885,7 +726,7 @@ export const OrderPage = ({ user, selectedProduct, setPage, addOrder, showToast 
         {step === 3 && (
           <div className="order-step3">
             <div className="bm-order-section-heading"><span><OrderIcon name="lock"/></span><div><h2>Payment &amp; Review</h2><p>Review your order and choose your payment method.</p></div></div>
-            {import.meta.env.DEV && <span className="order-step3__test">Test payment mode</span>}
+
             <div className="order-step3__grid">
               <section className="order-step3__summary" aria-labelledby="order-summary-title">
                 <h3 id="order-summary-title">Order Summary</h3>
@@ -910,7 +751,7 @@ export const OrderPage = ({ user, selectedProduct, setPage, addOrder, showToast 
                   </dl>
                 </section>
                 <fieldset className="order-step3__wallets"><legend>Payment Method</legend>
-                  <div>{PAYMENT_OPTIONS.map(option => <label key={option.id} className={form.paymentMethod === option.id ? "is-selected" : ""}>
+                  <div>{PAYMENT_OPTIONS.filter(option => !walkIn || option.id === "cash").map(option => <label key={option.id} className={form.paymentMethod === option.id ? "is-selected" : ""}>
                     <input type="radio" name="paymentMethod" value={option.id} checked={form.paymentMethod === option.id} onChange={() => { f("paymentMethod", option.id); setConfirmed(false); }}/>
                     <span><strong>{option.label}</strong><small>{option.accountName}</small></span>
                   </label>)}</div>
@@ -918,7 +759,7 @@ export const OrderPage = ({ user, selectedProduct, setPage, addOrder, showToast 
               </div>
             </div>
             <div aria-live="polite">
-              <p className="bm-order-payment-notice">Pay the full order total shown above. Upload your proof of payment after choosing a method; BM Printing will verify it manually.</p>
+              <p className="bm-order-payment-notice">{form.paymentMethod === "cash" ? "Pay in person at BM Printing Services. Present your saved order reference at the shop. No payment screenshot is required." : "Pay the full total and upload proof from My Orders after saving. Payment awaits Admin verification."}</p>
             </div>
             <label className="order-step3__confirmation"><input type="checkbox" checked={confirmed} onChange={event => setConfirmed(event.target.checked)}/><span>I confirm that the order details above are correct and I will pay the full total.</span></label>
             <div className="order-step3__actions">

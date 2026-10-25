@@ -6,6 +6,9 @@ import { Btn } from "../Common/Btn";
 import "./ProductsPage.css";
 import { publicAsset } from '../../utils/assets';
 import { catalogSource } from '../../utils/catalogSource';
+import { orderApi } from '../../utils/orderApi';
+import { watchCatalog } from '../../utils/watchCatalog';
+import { productAvailability } from '../../../shared/productStock';
 
 const REMOVED_PRODUCT_NAMES = new Set([
   "Tote Bag Printing",
@@ -25,9 +28,9 @@ export const ProductsPage = ({ setPage, setSelectedProduct }) => {
   useEffect(() => {
     const fetchProducts = async () => {
       try {
-        const response = await fetch("/api/products");
-        if (response.ok) {
-          const data = await response.json();
+        const data = await orderApi("/api/products", { cache: "no-store" });
+        {
+          setProductError("");
           const source = catalogSource(data, PRODUCTS);
           if (source) {
             const merged = source.map(dp => {
@@ -48,15 +51,13 @@ export const ProductsPage = ({ setPage, setSelectedProduct }) => {
             });
             setDbProducts(merged);
           }
-        } else {
-          setProductError("The product catalog is temporarily unavailable.");
         }
       } catch {
         setProductError("The product catalog is temporarily unavailable.");
       }
       setLoadingProducts(false);
     };
-    fetchProducts();
+    return watchCatalog(fetchProducts);
   }, []);
 
   const displayProducts = dbProducts.filter(
@@ -108,15 +109,14 @@ export const ProductsPage = ({ setPage, setSelectedProduct }) => {
                 <div className="bm-catalog__purchase">
                   <p className="bm-catalog__price">&#8369;{p.price.toLocaleString()}</p>
                   <p className="bm-catalog__unit">{p.unit || "per piece"} &middot; min. {p.minQty} pcs</p>
-                  {p.trackStock && p.stock <= (p.lowStockThreshold || 0) && (
-                    <p className={`bm-catalog__stock${p.stock === 0 ? ' bm-catalog__stock--empty' : ''}`}>
-                      {p.stock === 0 ? "Out of Stock" : `Low Stock: ${p.stock} left`}
-                    </p>
-                  )}
-                  <Btn size="sm" style={{ minHeight: 44, padding: "10px 20px" }} onClick={() => {
+                  <p className={`bm-catalog__stock bm-catalog__stock--${productAvailability(p).code}`}>
+                    {productAvailability(p).label}
+                  </p>
+                  <Btn size="sm" disabled={p.active === false || (p.trackStock && p.stock <= 0)} style={{ minHeight: 44, padding: "10px 20px" }} onClick={() => {
+                    if (p.active === false || (p.trackStock && p.stock <= 0)) return;
                     setSelectedProduct(p);
                     setPage("order");
-                  }}>Order <span aria-hidden="true">&rarr;</span></Btn>
+                  }}>{p.active === false || (p.trackStock && p.stock <= 0) ? 'Out of Stock' : <>Order <span aria-hidden="true">&rarr;</span></>}</Btn>
                 </div>
               </div>
             </article>

@@ -1,9 +1,18 @@
 import { allowedFrontendOrigins, deploymentHostnames } from '../server/deploymentOrigins.js';
-import { apiRequestNeedsMongo, restoreApiPath } from '../api/_requestPath.js';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 
 describe('Vercel deployment routing configuration', () => {
+  test('allows only the known local Vite origins during development', () => {
+    const origins = allowedFrontendOrigins({ NODE_ENV: 'development' });
+    expect([...origins]).toEqual(expect.arrayContaining([
+      'http://localhost:3000', 'http://127.0.0.1:3000',
+      'http://localhost:3001', 'http://127.0.0.1:3001',
+      'http://localhost:3002', 'http://127.0.0.1:3002'
+    ]));
+    expect(origins.has('http://attacker.example')).toBe(false);
+  });
+
   test('recognizes the production and current Vercel deployment hosts', () => {
     const env = {
       NODE_ENV: 'production',
@@ -21,25 +30,17 @@ describe('Vercel deployment routing configuration', () => {
     ]));
   });
 
-  test('restores the original Express API path and query string', () => {
-    const req = { url: '/api?__api_path=products', query: { __api_path: 'products', category: 'Printing' } };
-    restoreApiPath(req);
-    expect(req.url).toBe('/api/products?category=Printing');
-    expect(req.query).toEqual({ category: 'Printing' });
+  test('deploys Vercel as a static SPA without an API function rewrite', () => {
+    const config = JSON.parse(readFileSync(path.join(process.cwd(), 'vercel.json'), 'utf8'));
+    expect(config.functions).toBeUndefined();
+    expect(config.routes).not.toEqual(expect.arrayContaining([expect.objectContaining({ src: expect.stringContaining('/api') })]));
+    expect(readFileSync(path.join(process.cwd(), '.vercelignore'), 'utf8')).toContain('api/**');
   });
 
-  test('keeps Turnstile verification available without weakening database-backed APIs', () => {
-    expect(apiRequestNeedsMongo('/api/turnstile/verify')).toBe(false);
-    expect(apiRequestNeedsMongo('/api/turnstile/verify?source=login')).toBe(false);
-    expect(apiRequestNeedsMongo('/api/health')).toBe(false);
-    expect(apiRequestNeedsMongo('/api/products')).toBe(true);
-    expect(apiRequestNeedsMongo('/api/auth/login')).toBe(true);
-  });
-
-  test('renders one shared Turnstile widget on each email authentication page', () => {
+  test('renders Supabase CAPTCHA on password auth while leaving Google OAuth independent', () => {
     const source = file => readFileSync(path.join(process.cwd(), file), 'utf8');
-    expect(source('src/components/Pages/LoginPage.jsx').match(/<TurnstileWidget/g)).toHaveLength(1);
-    expect(source('src/components/Pages/RegisterPage.jsx').match(/<TurnstileWidget/g)).toHaveLength(1);
-    expect(source('src/components/Common/GoogleAuthOption.jsx')).not.toContain('<TurnstileWidget');
+    expect(source('src/components/Pages/LoginPage.jsx')).toContain('<TurnstileWidget');
+    expect(source('src/components/Pages/RegisterPage.jsx')).toContain('<TurnstileWidget');
+    expect(source('src/components/Common/GoogleAuthOption.jsx')).not.toMatch(/TurnstileWidget|captchaToken/);
   });
 });

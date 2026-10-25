@@ -1,7 +1,8 @@
 import './server/loadEnv.js';
 import phase3Routes from './server/routes/jobOrders.js';
+import financialRoutes from './server/routes/financials.js';
 import orderArchiveRoutes from './server/routes/orderArchives.js';
-import { displayOrderStatus } from './shared/orderWorkflow.js';
+import { displayOrderStatus, isFulfilledOrderStatus } from './shared/orderWorkflow.js';
 import express from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
@@ -11,7 +12,7 @@ import bcrypt from 'bcryptjs';
 import Joi from 'joi';
 import mongoose from 'mongoose';
 import { fileURLToPath } from 'url';
-import { connectMongo, seedCatalogAndAdmin, User, Product, Order, Inventory, Production, OrderFile, AuditLog, StockMovement, Employee } from './server/db.js';
+import { connectMongo, seedCatalogAndAdmin, User, Product, Order, Inventory, Production, OrderFile, AuditLog, StockMovement } from './server/db.js';
 import { logMongoStartupFailure } from './server/mongoDiagnostics.js';
 import { generateDailyReport, getDefaultReportDate, getReportSummary, readReportFile, formatCurrency } from './server/reportService.js';
 import { generateToken, requireAuth, requireAdmin, optionalAuth, requireOrderStaff } from './server/middleware/auth.js';
@@ -21,15 +22,18 @@ import authRoutes from './server/routes/auth.js';
 import productRoutes from './server/routes/products.js';
 import orderRoutes from './server/routes/orders.js';
 import orderFileRoutes from './server/routes/orderFiles.js';
+import legacyStaffAccessRoutes from './server/routes/legacyStaffAccess.js';
 import orderPaymentRoutes from './server/routes/orderPayments.js';
 import paymentRoutes from './server/routes/payments.js';
 import chatRoutes from './server/routes/chat.js';
-import turnstileRoutes from './server/routes/turnstile.js';
 import contactMessageRoutes from './server/routes/contactMessages.js';
 import employeeRoutes from './server/routes/employees.js';
 import notificationRoutes from './server/routes/notifications.js';
 import customerRoutes from './server/routes/customers.js';
 import { allowedFrontendOrigins } from './server/deploymentOrigins.js';
+import { startNotificationWorker } from './server/notificationWorker.js';
+import { storageConfigured } from './server/uploadStorage.js';
+import { API_JSON_BODY_LIMIT, handleJsonBodyError } from './server/httpRuntime.js';
 
 
 
@@ -41,7 +45,9 @@ if (process.env.VERCEL || process.env.NODE_ENV === 'production') app.set('trust 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const FRONTEND_ORIGINS = allowedFrontendOrigins();
 
-app.use(express.json({ limit: '50mb' }));
+// A 10 MiB binary upload expands to roughly 13.4 MiB as base64. Keep enough
+// JSON envelope room while rejecting oversized bodies before file decoding.
+app.use(express.json({ limit: API_JSON_BODY_LIMIT }));
 app.use(cors({
   origin(origin, callback) {
     if (!origin || FRONTEND_ORIGINS.has(origin.replace(/\/$/, ''))) return callback(null, true);
@@ -60,10 +66,6 @@ app.use('/api/security/test', (req, res, next) => process.env.NODE_ENV === 'prod
 
 function safeText(value) {
   return typeof value === 'string' ? value : '';
-}
-
-function escapeRegex(str) {
-  return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
 const authLimiter = rateLimit({
@@ -160,14 +162,15 @@ orderRoutes(app);
 orderPaymentRoutes(app);
 paymentRoutes(app);
 chatRoutes(app);
-turnstileRoutes(app);
 contactMessageRoutes(app);
 employeeRoutes(app);
 notificationRoutes(app);
 customerRoutes(app);
 phase3Routes(app);
+financialRoutes(app);
 orderArchiveRoutes(app);
 orderFileRoutes(app, path.resolve(process.env.ORDER_UPLOAD_DIR || path.join(__dirname, 'uploads', 'orders')));
+legacyStaffAccessRoutes(app, serializeOrder);
 // All status changes use the guarded order status endpoint; retire unsafe legacy mutations.
 app.use('/api/production', (req, res, next) => {
   if (['POST', 'PATCH', 'PUT', 'DELETE'].includes(req.method)) {
@@ -185,6 +188,10 @@ app.get('/api/health', async (req, res) => {
     logMongoStartupFailure(error);
     res.status(503).json({ status: 'degraded', db: 'unavailable', timestamp: new Date() });
   }
+});
+
+app.get('/api/health/live', (_req, res) => {
+  res.json({ status: 'ok', timestamp: new Date() });
 });
 
 // ─── INVENTORY MANAGEMENT ───────────────────────────────────────────────
@@ -384,50 +391,19 @@ app.patch('/api/production/delay', requireOrderStaff, async (req, res) => {
   }
 });
 
-app.get('/api/production/:orderId', requireOrderStaff, async (req, res) => {
-  try {
-    const { orderId } = req.params;
-    const production = await Production.findOne({ orderId });
-    const order = await Order.findOne({ orderId });
-
-    if (!production && !order) {
-      return res.status(404).json({ error: 'Order or production record not found.' });
-    }
-
-    res.json({ success: true, production, order });
-  } catch (error) {
-    console.error('Failed to fetch production record:', error);
-    res.status(500).json({ error: 'Unable to fetch production record.' });
-  }
-});
-
-app.get('/api/production', requireOrderStaff, async (req, res) => {
-  try {
-    const productions = await Production.find(req.user.role === 'admin' ? {} : { $or: [{ phase3: { $ne: true } }, { assignedEmployee: req.user.id }] }).sort({ 'startTime': -1 }).lean();
-    const identityIds = [...new Set(productions.map(item => item.assignedEmployee).filter(Boolean))];
-    const linkedEmployees = identityIds.length
-      ? await Employee.find({ supabaseUserId: { $in: identityIds } }).select('name supabaseUserId').lean()
-      : [];
-    const employeeNames = new Map(linkedEmployees.map(employee => [employee.supabaseUserId, employee.name]));
-    res.json({ success: true, productions: productions.map(item => ({
-      ...item,
-      assignedEmployeeName: employeeNames.get(item.assignedEmployee) || item.assignedEmployeeName || (item.assignedEmployee ? 'Unknown employee' : 'Unassigned')
-    })) });
-  } catch (error) {
-    console.error('Failed to fetch production records:', error);
-    res.status(500).json({ error: 'Unable to fetch production records.' });
-  }
-});
-
 app.get('/api/admin/orders', requireAdmin, async (req, res) => {
   const orders = await Order.find({}).sort({ createdAt: -1 });
   res.json({ orders: orders.map(serializeOrder) });
 });
 
 app.get('/api/admin/reports/orders', requireAdmin, async (req, res) => {
-  const date = safeText(req.query.date) || getDefaultReportDate();
-  const summary = await getReportSummary(date);
-  res.json(summary);
+  try {
+    const date = safeText(req.query.date) || getDefaultReportDate();
+    res.json(await getReportSummary(date));
+  } catch (error) {
+    const invalid = error?.message?.startsWith('Invalid report date');
+    res.status(invalid ? 400 : 500).json({ error: invalid ? error.message : 'Unable to generate the report summary.' });
+  }
 });
 
 app.post('/api/admin/reports/orders/:date/regenerate', requireAdmin, async (req, res) => {
@@ -448,14 +424,20 @@ app.get('/api/admin/reports/orders/:date/download', requireAdmin, async (req, re
     res.setHeader('Content-Disposition', `attachment; filename="${date}.xlsx"`);
     res.send(file.data);
   } catch (error) {
-    res.status(404).json({ error: 'Report not found.' });
+    const invalid = error?.message?.startsWith('Invalid report date');
+    if (!invalid) console.error('Report download generation failed:', error?.message);
+    res.status(invalid ? 400 : 500).json({ error: invalid ? error.message : 'Unable to generate the report download.' });
   }
 });
 
 app.get('/api/admin/reports/orders/:date/summary', requireAdmin, async (req, res) => {
-  const date = safeText(req.params.date);
-  const summary = await getReportSummary(date);
-  res.json(summary);
+  try {
+    const date = safeText(req.params.date);
+    res.json(await getReportSummary(date));
+  } catch (error) {
+    const invalid = error?.message?.startsWith('Invalid report date');
+    res.status(invalid ? 400 : 500).json({ error: invalid ? error.message : 'Unable to generate the report summary.' });
+  }
 });
 
 app.get('/api/admin/reports/currency', requireAdmin, async (req, res) => {
@@ -489,8 +471,10 @@ app.get("/api/dashboard/summary", requireAdmin, async (req, res) => {
       });
     }
 
-    const totalRevenue = orders.reduce((sum, order) => sum + Number(order.totalAmount || 0), 0);
-    const averageOrderValue = totalRevenue / orders.length;
+    const bookedOrderValue = orders.reduce((sum, order) => sum + Number(order.totalAmount || 0), 0);
+    const fulfilledOrders = orders.filter(order => isFulfilledOrderStatus(order.status));
+    const totalRevenue = fulfilledOrders.reduce((sum, order) => sum + Number(order.totalAmount || 0), 0);
+    const averageOrderValue = fulfilledOrders.length ? totalRevenue / fulfilledOrders.length : 0;
 
     // Orders by status
     const statusCounts = {};
@@ -503,7 +487,7 @@ app.get("/api/dashboard/summary", requireAdmin, async (req, res) => {
       pending: orders.filter(o => o.status === "Pending" || o.status === "Quoted" || o.status === "Confirmed").length,
       inProduction: orders.filter(o => displayOrderStatus(o.status) === "Processing").length,
       ready: orders.filter(o => displayOrderStatus(o.status) === "Ready for Pickup").length,
-      completed: orders.filter(o => o.status === "Completed").length,
+      completed: orders.filter(o => isFulfilledOrderStatus(o.status)).length,
       cancelled: orders.filter(o => o.status === "Cancelled").length
     };
 
@@ -536,9 +520,10 @@ app.get("/api/dashboard/summary", requireAdmin, async (req, res) => {
       data: {
         totalOrders: orders.length,
         totalRevenue,
+          bookedOrderValue,
         averageOrderValue,
         pendingOrders: statusCounts.Pending || 0,
-        completedOrders: statusCounts.Completed || 0,
+        completedOrders: (statusCounts.Completed || 0) + (statusCounts['Picked Up'] || 0),
         cancelledOrders: statusCounts.Cancelled || 0,
         productionQueue: productionCounts.pending,
         inProduction: productionCounts.inProduction,
@@ -568,13 +553,21 @@ app.get("/api/ai/daily-summary", requireAdmin, async (req, res) => {
         $lte: new Date(dateString + "T23:59:59.999+08:00")
       }
     });
+    const fulfilledToday = await Order.find({
+      status: { $in: ['Picked Up', 'Completed'] },
+      $or: [
+        { pickedUpAt: { $gte: new Date(dateString + 'T00:00:00+08:00'), $lte: new Date(dateString + 'T23:59:59.999+08:00') } },
+        { completedAt: { $gte: new Date(dateString + 'T00:00:00+08:00'), $lte: new Date(dateString + 'T23:59:59.999+08:00') } }
+      ]
+    }).select('totalAmount').lean();
 
     const totalOrders = orders.length;
-    const completedOrders = orders.filter(o => o.status === "Completed").length;
+    const completedOrders = orders.filter(o => isFulfilledOrderStatus(o.status)).length;
     const pendingOrders = orders.filter(o => o.status === "Pending" || o.status === "Quoted" || o.status === "Confirmed" || o.status === "Payment Pending").length;
     const cancelledOrders = orders.filter(o => o.status === "Cancelled").length;
-    const revenue = orders.reduce((sum, order) => sum + Number(order.totalAmount || 0), 0);
-    const averageOrderValue = totalOrders > 0 ? revenue / totalOrders : 0;
+    const bookedOrderValue = orders.reduce((sum, order) => sum + Number(order.totalAmount || 0), 0);
+    const revenue = fulfilledToday.reduce((sum, order) => sum + Number(order.totalAmount || 0), 0);
+    const averageOrderValue = totalOrders > 0 ? bookedOrderValue / totalOrders : 0;
 
     // Top service
     const serviceCounts = {};
@@ -594,6 +587,7 @@ app.get("/api/ai/daily-summary", requireAdmin, async (req, res) => {
         pendingOrders,
         cancelledOrders,
         revenue,
+        bookedOrderValue,
         averageOrderValue,
         topService,
         summary: "DAILY PRINTING SHOP SUMMARY\n\nDate: " + dateString + "\n\nOrders: " + totalOrders + "\nCompleted: " + completedOrders + "\nPending: " + pendingOrders + "\nCancelled: " + cancelledOrders + "\n\nRevenue: ₱" + revenue.toLocaleString() + "\n\nTop Service: " + topService + "\n\nProduction Load: " + (completedOrders > 0 ? "Moderate-High" : "Light") + "\n\nAI Insight: Order activity is " + (totalOrders > 0 ? "active" : "light") + " today."
@@ -619,9 +613,28 @@ async function startServer() {
     if (process.env.SEED_DEFAULT_ADMIN === 'true' && process.env.NODE_ENV !== 'production') {
       await seedCatalogAndAdmin();
     }
-    app.listen(process.env.PORT || 4000, () => {
+    const stopNotificationWorker = startNotificationWorker();
+    const server = app.listen(process.env.PORT || 4000, () => {
       console.log(`BM Printing Services backend running on port ${process.env.PORT || 4000}`);
     });
+    let shuttingDown = false;
+    const shutdown = signal => {
+      if (shuttingDown) return;
+      shuttingDown = true;
+      console.log(`Received ${signal}; stopping notification work and HTTP traffic.`);
+      const forceExit = setTimeout(() => process.exit(1), 30_000);
+      forceExit.unref?.();
+      void stopNotificationWorker().finally(() => {
+        server.close(() => {
+          void mongoose.disconnect().finally(() => {
+            clearTimeout(forceExit);
+            process.exit(0);
+          });
+        });
+      });
+    };
+    process.once('SIGINT', () => shutdown('SIGINT'));
+    process.once('SIGTERM', () => shutdown('SIGTERM'));
   } catch (error) {
     logMongoStartupFailure(error);
     process.exit(1);
@@ -673,18 +686,6 @@ app.post('/api/files/upload', requireAdmin, async (req, res) => {
   } catch (error) {
     console.error('File upload failed:', error);
     res.status(500).json({ error: 'Unable to upload file.' });
-  }
-});
-
-app.get('/api/files/:orderId', requireOrderStaff, async (req, res) => {
-  try {
-    const { orderId } = req.params;
-    const files = await OrderFile.find({ orderId }).sort({ uploadedAt: -1 });
-
-    res.json({ success: true, files });
-  } catch (error) {
-    console.error('Failed to fetch files:', error);
-    res.status(500).json({ error: 'Unable to fetch files.' });
   }
 });
 
@@ -795,9 +796,11 @@ app.get("/api/ai/insights/sales", requireAdmin, async (req, res) => {
       });
     }
 
-    const totalRevenue = orders.reduce((sum, order) => sum + Number(order.totalAmount || 0), 0);
+    const bookedOrderValue = orders.reduce((sum, order) => sum + Number(order.totalAmount || 0), 0);
+    const fulfilledOrders = orders.filter(order => isFulfilledOrderStatus(order.status));
+    const totalRevenue = fulfilledOrders.reduce((sum, order) => sum + Number(order.totalAmount || 0), 0);
     const totalOrders = orders.length;
-    const averageOrderValue = totalRevenue / totalOrders;
+    const averageOrderValue = fulfilledOrders.length ? totalRevenue / fulfilledOrders.length : 0;
 
     // Service trends
     const serviceCounts = {};
@@ -821,6 +824,7 @@ app.get("/api/ai/insights/sales", requireAdmin, async (req, res) => {
       success: true,
       data: {
         totalRevenue,
+        bookedOrderValue,
         totalOrders,
         averageOrderValue,
         peakPeriod,
@@ -891,12 +895,7 @@ app.get("/api/system/health", requireAdmin, async (req, res) => {
       database = state === 1 ? 'OK' : 'Degraded';
     } catch { database = 'Error'; }
 
-    let storage = 'OK';
-    try {
-      const testDir = path.join(__dirname, 'uploads');
-      if (!fs.existsSync(testDir)) fs.mkdirSync(testDir, { recursive: true });
-      fs.accessSync(testDir, fs.constants.W_OK);
-    } catch { storage = 'Error'; }
+    let storage = storageConfigured() ? 'Configured (private object storage)' : 'Local development only';
 
     let excelGenerator = 'OK';
     try {
@@ -922,24 +921,11 @@ app.get("/api/system/health", requireAdmin, async (req, res) => {
 
 app.get("/api/system/backup-status", requireAdmin, async (req, res) => {
   try {
-    let reportsDir = 'unknown';
-    let reportCount = 0;
-    try {
-      const reportsPath = path.join(__dirname, 'reports', 'orders');
-      if (fs.existsSync(reportsPath)) {
-        reportsDir = 'accessible';
-        const files = fs.readdirSync(reportsPath).filter(f => f.endsWith('.xlsx'));
-        reportCount = files.length;
-      } else {
-        reportsDir = 'not configured';
-      }
-    } catch { reportsDir = 'error'; }
-
     const backupStatus = {
-      reportsDirectory: reportsDir,
-      generatedReports: reportCount,
-      backupFrequency: 'Manual (Excel reports)',
-      retentionPolicy: 'Reports stored locally',
+      reportsDirectory: 'Not used',
+      generatedReports: 'On demand',
+      backupFrequency: 'Database backup policy',
+      retentionPolicy: 'Reports are derived from retained order records',
       timestamp: new Date()
     };
 
@@ -968,7 +954,7 @@ app.get("/api/ai/insights/production", requireAdmin, async (req, res) => {
     }
 
     const inProduction = orders.filter(o => displayOrderStatus(o.status) === 'Processing').length;
-    const completed = orders.filter(o => o.status === 'Completed').length;
+    const completed = orders.filter(o => isFulfilledOrderStatus(o.status)).length;
     const delayed = orders.filter(o => o.status === 'Delayed').length;
 
     res.json({
@@ -987,36 +973,6 @@ app.get("/api/ai/insights/production", requireAdmin, async (req, res) => {
       success: false,
       error: { code: 'AI_ERROR', message: 'Failed to generate AI production insights.' }
     });
-  }
-});
-
-app.get("/api/search/orders", requireOrderStaff, async (req, res) => {
-  try {
-    const { query, status, customer, service, startDate, endDate } = req.query;
-    const filter = {};
-
-    if (query) {
-      const safe = escapeRegex(query);
-      filter.$or = [
-        { orderId: { $regex: safe, $options: 'i' } },
-        { customerName: { $regex: safe, $options: 'i' } }
-      ];
-    }
-
-    if (status) filter.status = status;
-    if (customer) filter.customerName = { $regex: escapeRegex(customer), $options: 'i' };
-
-    if (startDate || endDate) {
-      filter.createdAt = {};
-      if (startDate) filter.createdAt.$gte = new Date(startDate);
-      if (endDate) filter.createdAt.$lte = new Date(endDate);
-    }
-
-    const orders = await Order.find(filter).sort({ createdAt: -1 });
-    res.json({ success: true, data: orders.map(serializeOrder) });
-  } catch (error) {
-    console.error('Search orders failed:', error);
-    res.status(500).json({ success: false, error: 'Search failed.' });
   }
 });
 
@@ -1212,9 +1168,11 @@ app.get("/api/bi/dashboard", requireAdmin, async (req, res) => {
   try {
     const orders = await Order.find({}).sort({ createdAt: -1 });
 
-    const totalRevenue = orders.reduce((sum, order) => sum + Number(order.totalAmount || 0), 0);
+    const bookedOrderValue = orders.reduce((sum, order) => sum + Number(order.totalAmount || 0), 0);
+    const fulfilledOrders = orders.filter(order => isFulfilledOrderStatus(order.status));
+    const totalRevenue = fulfilledOrders.reduce((sum, order) => sum + Number(order.totalAmount || 0), 0);
     const totalOrders = orders.length;
-    const completedOrders = orders.filter(o => o.status === "Completed").length;
+    const completedOrders = orders.filter(o => isFulfilledOrderStatus(o.status)).length;
     const pendingOrders = orders.filter(o => o.status === "Pending" || o.status === "Quoted").length;
     const cancelledOrders = orders.filter(o => o.status === "Cancelled").length;
 
@@ -1235,7 +1193,8 @@ app.get("/api/bi/dashboard", requireAdmin, async (req, res) => {
       operations: {
         totalOrders: totalOrders,
         totalRevenue: totalRevenue,
-        averageOrderValue: totalOrders > 0 ? totalRevenue / totalOrders : 0,
+        bookedOrderValue,
+        averageOrderValue: fulfilledOrders.length > 0 ? totalRevenue / fulfilledOrders.length : 0,
         completedOrders: completedOrders,
         pendingOrders: pendingOrders,
         cancelledOrders: cancelledOrders,
@@ -1243,6 +1202,7 @@ app.get("/api/bi/dashboard", requireAdmin, async (req, res) => {
       },
       sales: {
         totalRevenue: totalRevenue,
+        bookedOrderValue,
         totalOrders: totalOrders,
         revenueTrend: dayCounts
       },
@@ -1256,7 +1216,9 @@ app.get("/api/bi/dashboard", requireAdmin, async (req, res) => {
         message: "Production data would be fetched from Production model"
       },
       payments: {
-        totalRevenue: totalRevenue,
+        verifiedReceipts: orders.reduce((sum, order) => sum +
+          Number(order.cashPayment?.verifiedBy && order.cashPayment?.verifiedAt ? order.cashPayment.amount || 0 : 0) +
+          (order.paymentSubmissions || []).reduce((paid, payment) => paid + Number(payment.status === 'Verified' && payment.verifiedBy && payment.verifiedAt ? payment.amount || 0 : 0), 0), 0),
         message: "Payment data would be aggregated from Payment model"
       },
       recentOrders: recentOrders
@@ -1285,13 +1247,17 @@ app.get("/api/bi/analytics", requireAdmin, async (req, res) => {
       });
     }
 
-    const totalRevenue = orders.reduce((sum, order) => sum + Number(order.totalAmount || 0), 0);
+    const bookedOrderValue = orders.reduce((sum, order) => sum + Number(order.totalAmount || 0), 0);
+    const fulfilledOrders = orders.filter(order => isFulfilledOrderStatus(order.status));
+    const totalRevenue = fulfilledOrders.reduce((sum, order) => sum + Number(order.totalAmount || 0), 0);
     const totalOrders = orders.length;
 
     // Revenue trend (by month)
     const monthlyRevenue = {};
-    orders.forEach(order => {
-      const month = new Date(order.createdAt).toISOString().split("T")[0].slice(0, 7);
+    fulfilledOrders.forEach(order => {
+      const fulfilledAt = order.pickedUpAt || order.completedAt;
+      if (!fulfilledAt) return;
+      const month = new Date(fulfilledAt).toISOString().split("T")[0].slice(0, 7);
       monthlyRevenue[month] = (monthlyRevenue[month] || 0) + Number(order.totalAmount || 0);
     });
     const revenueTrend = Object.entries(monthlyRevenue)
@@ -1322,6 +1288,7 @@ app.get("/api/bi/analytics", requireAdmin, async (req, res) => {
         orderGrowth: isNaN(Number(orderGrowth)) ? 0 : Number(orderGrowth),
         serviceDistribution: serviceDistribution,
         totalRevenue: totalRevenue,
+        bookedOrderValue,
         totalOrders: totalOrders
       }
     });
@@ -1431,6 +1398,7 @@ app.get("/api/security/permissions", requireAdmin, async (req, res) => {
 });
 
 app.use((error, _req, res, next) => {
+  if (error?.type === 'entity.too.large') return handleJsonBodyError(error, _req, res, next);
   if (error?.status === 403 && error.message === 'Origin is not allowed by CORS.') {
     return res.status(403).json({ error: 'Origin is not allowed.' });
   }
@@ -1439,4 +1407,5 @@ app.use((error, _req, res, next) => {
 
 export { app, startServer };
 
-if (!process.env.VERCEL) startServer();
+const invokedAsMain = process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);
+if (invokedAsMain) startServer();

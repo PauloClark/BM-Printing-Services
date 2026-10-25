@@ -1,5 +1,6 @@
 node_modules/
 .env
+.env.qa.local
 .env.migration.local
 .env.vercel.production.local
 dist/
@@ -17,3 +18,7 @@ backups/
 *.dump
 *.migration-report.json
 *.log
+
+# Local secret-bearing environment downloads
+env
+env.*

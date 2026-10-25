@@ -1,15 +1,15 @@
 import { useEffect, useState } from "react";
-import { Card } from "../Common/Card";
 import { Btn } from "../Common/Btn";
 import { Input } from "../Common/Input";
-import { TurnstileWidget } from "../Common/TurnstileWidget";
 import { BM_CONTACT } from "../../constants/contact";
 import "./ContactPage.css";
 import { publicAsset } from '../../utils/assets';
-import { turnstileStatusMessage } from '../../utils/turnstile';
+import { apiUrl } from '../../utils/orderApi';
+import { TurnstileWidget } from '../Common/TurnstileWidget';
+import { requireTurnstileToken } from '../../utils/turnstile';
 
 // Turns a backend response into actionable copy. Without this, every failure
-// mode (server down, missing route, rate limit, rejected Turnstile, validation)
+// mode (server down, missing route, rate limit or invalid input)
 // collapsed into one generic message that hid the real cause.
 export function contactErrorMessage(status, data) {
   const fieldErrors = data?.fields ? Object.values(data.fields).filter(Boolean).join(" ") : "";
@@ -38,9 +38,9 @@ export const ContactPage = ({ showToast, user }) => {
   });
   const [loading, setLoading] = useState(false);
   const [sent, setSent] = useState(false);
-  const [turnstileToken, setTurnstileToken] = useState("");
-  const [turnstileStatus, setTurnstileStatus] = useState("loading");
-  const [turnstileResetSignal, setTurnstileResetSignal] = useState(0);
+  const [captchaToken, setCaptchaToken] = useState('');
+  const [captchaStatus, setCaptchaStatus] = useState('loading');
+  const [captchaReset, setCaptchaReset] = useState(0);
   const f = (k, v) => setForm(p => ({ ...p, [k]: v }));
 
   // Prefill identity from the verified session. Guests keep the blank fields.
@@ -53,12 +53,6 @@ export const ContactPage = ({ showToast, user }) => {
     }));
   }, [user]);
 
-  // A fresh challenge is required for each guest submission.
-  const resetTurnstile = () => {
-    setTurnstileToken("");
-    setTurnstileResetSignal(signal => signal + 1);
-  };
-
   const send = async () => {
     if (loading) return;
     setSent(false);
@@ -68,11 +62,10 @@ export const ContactPage = ({ showToast, user }) => {
       showToast("Please fill in your name, email, subject and message.", "error");
       return;
     }
-
-    if (!user && !turnstileToken) {
-      const message = turnstileStatusMessage(turnstileStatus);
-      showToast(message, "error");
-      return;
+    let securityToken;
+    if (!user) {
+      try { securityToken = requireTurnstileToken(captchaToken, captchaStatus); }
+      catch (error) { showToast(error.message, 'error'); return; }
     }
 
     setLoading(true);
@@ -89,7 +82,7 @@ export const ContactPage = ({ showToast, user }) => {
         }
       }
 
-      const response = await fetch("/api/contact/messages", {
+      const response = await fetch(apiUrl("/api/contact/messages"), {
         method: "POST",
         headers,
         body: JSON.stringify({
@@ -97,15 +90,13 @@ export const ContactPage = ({ showToast, user }) => {
           email: form.email,
           subject: form.subject,
           message: form.message,
-          turnstileToken: user ? undefined : turnstileToken
+          turnstileToken: user ? undefined : securityToken
         })
       });
 
       const data = await response.json().catch(() => null);
 
       if (!response.ok) {
-        // A consumed or rejected Turnstile token must be renewed before retrying.
-        if (!user) resetTurnstile();
         throw new Error(contactErrorMessage(response.status, data));
       }
 
@@ -117,7 +108,6 @@ export const ContactPage = ({ showToast, user }) => {
         subject: "",
         message: ""
       }));
-      if (!user) resetTurnstile();
     } catch (error) {
       // A thrown fetch means the request never reached the backend at all.
       const message = error instanceof TypeError
@@ -125,6 +115,10 @@ export const ContactPage = ({ showToast, user }) => {
         : (error.message || "Unable to send message. Please try again.");
       showToast(message, "error");
     } finally {
+      if (!user) {
+        setCaptchaToken('');
+        setCaptchaReset(value => value + 1);
+      }
       setLoading(false);
     }
   };
@@ -172,20 +166,12 @@ export const ContactPage = ({ showToast, user }) => {
                 placeholder="Tell us more..."
                 rows={5}
               />
-              {!user && (
-                <div className="bm-contact-turnstile">
-                  <TurnstileWidget
-                    resetSignal={turnstileResetSignal}
-                    onTokenChange={setTurnstileToken}
-                    onStatusChange={setTurnstileStatus}
-                  />
-                </div>
-              )}
               {sent && (
                 <p className="bm-contact-success" role="status">
                   Message sent successfully. We&apos;ll respond within the day.
                 </p>
               )}
+              {!user && <div className="bm-contact-turnstile"><TurnstileWidget resetSignal={captchaReset} onTokenChange={setCaptchaToken} onStatusChange={setCaptchaStatus} /></div>}
               <Btn style={{ width: "100%" }} onClick={send} loading={loading} disabled={loading}>
                 {loading ? "Sending..." : "Send Message"}
               </Btn>
@@ -238,19 +224,6 @@ export const ContactPage = ({ showToast, user }) => {
           />
         </div>
       </div>
-
-      <Card className="bm-contact-payment">
-        <div>
-          <h2>Payment Assistance</h2>
-          <p>
-            To complete your payment, contact the BM Printing Services Admin or Owner directly to arrange and confirm it.
-          </p>
-        </div>
-        <div className="bm-contact-payment-actions">
-          <a href={BM_CONTACT.facebookUrl} target="_blank" rel="noreferrer">Contact on Facebook</a>
-          <a href={`mailto:${BM_CONTACT.email}`}>Contact via Gmail</a>
-        </div>
-      </Card>
     </div>
   );
 };

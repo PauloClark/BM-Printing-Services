@@ -45,7 +45,7 @@ export const contactMessageStatus = [
   body('status')
     .trim()
     .notEmpty().withMessage('Status is required')
-    .isIn(['new', 'read', 'resolved']).withMessage('Invalid status value'),
+      .isIn(['new', 'read', 'awaiting_staff', 'awaiting_customer', 'resolved']).withMessage('Invalid status value'),
 
   handleErrors('Invalid status value.')
 ];

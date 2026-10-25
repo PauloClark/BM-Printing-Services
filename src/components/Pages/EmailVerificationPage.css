@@ -1,0 +1,14 @@
+.bm-verification-page { min-height: calc(100svh - var(--bm-navbar-height, 74px)); display: grid; place-items: center; padding: 48px 20px 64px; background: #f8f7f5; }
+.bm-verification-card { width: min(100%, 520px); box-sizing: border-box; padding: 42px 38px 38px; border: 1px solid #e5dedf; border-radius: 18px; background: #fff; box-shadow: 0 18px 48px rgba(48, 24, 28, .08); text-align: center; }
+.bm-verification-brand { display: inline-flex; align-items: center; gap: 11px; margin-bottom: 28px; color: #8b1a1a; font: 800 14px/1.1 Montserrat, sans-serif; text-align: left; letter-spacing: .04em; }
+.bm-verification-brand svg { flex: 0 0 auto; }.bm-verification-brand small { color: #777074; font-size: 8px; letter-spacing: .16em; }
+.bm-verification-check, .bm-verification-alert { display: grid; place-items: center; width: 72px; height: 72px; margin: 0 auto 21px; border-radius: 50%; font: 700 38px/1 Montserrat, sans-serif; }
+.bm-verification-check { background: #e8f7ee; color: #20834b; }.bm-verification-alert { background: #fff3dc; color: #a66a12; font-size: 31px; }
+.bm-verification-loader { display: block; width: 42px; height: 42px; margin: 15px auto 36px; border: 4px solid #eadcde; border-top-color: #8b1a1a; border-radius: 50%; animation: bm-verification-spin .8s linear infinite; }
+@keyframes bm-verification-spin { to { transform: rotate(360deg); } }
+.bm-verification-eyebrow { margin: 0 0 8px; color: #8b1a1a; font: 700 10px Montserrat, sans-serif; letter-spacing: .12em; text-transform: uppercase; }
+.bm-verification-card h1 { margin: 0; color: #241c1e; font: 700 clamp(24px, 4vw, 31px)/1.2 Montserrat, sans-serif; }
+.bm-verification-message { max-width: 410px; margin: 16px auto 26px; color: #6b6264; font-size: 14px; line-height: 1.75; }
+.bm-verification-primary { min-width: 150px; padding: 12px 22px; border: 0; border-radius: 8px; background: #8b1a1a; color: #fff; font: 700 13px Montserrat, sans-serif; cursor: pointer; }
+.bm-verification-primary:hover { background: #6f1414; }.bm-verification-help { margin: 18px 0 0; color: #81787a; font-size: 12px; line-height: 1.6; }
+@media (max-width: 520px) { .bm-verification-page { padding: 28px 16px 44px; }.bm-verification-card { padding: 34px 22px 28px; }.bm-verification-card h1 { font-size: 24px; } }

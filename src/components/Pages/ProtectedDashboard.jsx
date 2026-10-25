@@ -9,7 +9,9 @@ export function ProtectedDashboard({ user, page, children }) {
   const [retry, setRetry] = useState(0);
   useEffect(() => {
     let active = true, pending = false;
-    setVerified(null); setError('');
+    const identityChanged = verified && verified.id !== user?.id;
+    if (identityChanged) setVerified(null);
+    setError('');
     const verify = async () => {
       if (pending) return;
       pending = true;
@@ -27,7 +29,7 @@ export function ProtectedDashboard({ user, page, children }) {
     return () => { active = false; clearInterval(timer); window.removeEventListener('focus', verify); };
   }, [user, page, retry]);
   if (error) return <div role="alert" style={{ padding: 40, textAlign: 'center' }}><p>{error}</p><button onClick={() => setRetry(n => n + 1)}>Retry access check</button></div>;
-  if (!verified) return <p role="status" style={{ padding: 40 }}>Verifying dashboard access…</p>;
+  if (!verified || verified.id !== user?.id) return <p role="status" style={{ padding: 40 }}>Verifying dashboard access…</p>;
   if (verified.role === 'staff' && verified.mustChangePassword) return <StaffPasswordGate user={verified} onChanged={() => setRetry(n => n + 1)} />;
   return children(verified);
 }

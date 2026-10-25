@@ -97,10 +97,9 @@ export const requireOrderAuth = async (req, res, next) => {
     req.user = supabaseAppUser(supabaseUser);
     req.authProvider = 'supabase';
     if (req.user.role === 'staff') {
-      const employee = await Employee.findOne({ supabaseUserId: req.user.id }).select('active mustChangePassword permissions').lean();
+      const employee = await Employee.findOne({ $or: [{ supabaseUserId: req.user.id }, { linkedUserId: req.user.id }] }).select('active archived mustChangePassword permissions').lean();
       req.user.employeeLinked = Boolean(employee);
-      req.user.employeeActive = Boolean(employee?.active);
-      req.user.employeeManaged = Boolean(employee) || Boolean(await Employee.exists({}));
+      req.user.employeeActive = Boolean(employee?.active && !employee?.archived);
       req.user.mustChangePassword = Boolean(employee?.active && employee?.mustChangePassword);
     }
     return next();
@@ -111,7 +110,7 @@ export const requireOrderAuth = async (req, res, next) => {
 
 export const requireOrderStaff = (req, res, next) => requireOrderAuth(req, res, () => {
   if (!isOrderStaff(req.user)) return res.status(403).json({ error: 'Staff or admin access required.' });
-  if (req.user.role === 'staff' && req.user.employeeManaged && !req.user.employeeActive) {
+  if (req.user.role === 'staff' && (req.authProvider !== 'supabase' || !req.user.employeeLinked || !req.user.employeeActive)) {
     return res.status(403).json({ error: 'Your staff account is not linked to an active employee record.' });
   }
   if (req.user.role === 'staff' && req.user.mustChangePassword) return res.status(428).json({ code: 'PASSWORD_CHANGE_REQUIRED', error: 'Change your temporary password before using staff operations.' });

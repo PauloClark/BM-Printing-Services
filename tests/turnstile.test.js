@@ -1,114 +1,50 @@
-import express from 'express';
-import request from 'supertest';
-import turnstileRoutes from '../server/routes/turnstile.js';
-import { verifyTurnstileServerToken } from '../server/turnstileVerify.js';
-import { TURNSTILE_ERRORS, verifyTurnstileToken } from '../src/utils/turnstile.js';
+import { requireTurnstileToken, TURNSTILE_ERRORS } from '../src/utils/turnstile.js';
+import { verifyTurnstileServerToken, verifyWithCloudflare, TURNSTILE_SITEVERIFY_URL } from '../server/turnstileVerify.js';
+import { readFileSync } from 'node:fs';
 
-let app;
-let originalSecret;
-let originalFetch;
+describe('Turnstile security integration', () => {
+  it('blocks missing, expired, and unavailable client challenges', () => {
+    expect(() => requireTurnstileToken('', 'expired')).toThrow(TURNSTILE_ERRORS.missing);
+    expect(() => requireTurnstileToken('', 'unavailable')).toThrow(TURNSTILE_ERRORS.unavailable);
+    expect(requireTurnstileToken('one-time-token', 'ready')).toBe('one-time-token');
+  });
 
-beforeEach(() => {
-  originalSecret = process.env.TURNSTILE_SECRET_KEY;
-  originalFetch = global.fetch;
-  process.env.TURNSTILE_SECRET_KEY = 'server-only-test-secret';
-  app = express();
-  app.use(express.json());
-});
+  it('accepts only a successful Siteverify response for an allowed hostname', async () => {
+    const valid = jest.fn().mockResolvedValue({ success: true, hostname: 'staging.example.com' });
+    await expect(verifyTurnstileServerToken('token', { verifyToken: valid, secret: 'server-secret', expectedHostnames: ['staging.example.com'] })).resolves.toEqual({ ok: true });
+    await expect(verifyTurnstileServerToken('token', { verifyToken: valid, secret: 'server-secret', expectedHostnames: ['other.example.com'] })).resolves.toMatchObject({ ok: false, status: 400 });
+    for (const token of ['', 'x'.repeat(2049)]) await expect(verifyTurnstileServerToken(token, { secret: 'server-secret' })).resolves.toMatchObject({ ok: false, status: 400 });
+  });
 
-afterEach(() => {
-  jest.restoreAllMocks();
-  global.fetch = originalFetch;
-  if (originalSecret === undefined) delete process.env.TURNSTILE_SECRET_KEY;
-  else process.env.TURNSTILE_SECRET_KEY = originalSecret;
-});
+  it('rejects invalid, expired, reused, and unavailable server challenges safely', async () => {
+    for (const code of ['invalid-input-response', 'timeout-or-duplicate']) {
+      const verifyToken = jest.fn().mockResolvedValue({ success: false, 'error-codes': [code] });
+      await expect(verifyTurnstileServerToken('token', { verifyToken, secret: 'server-secret' })).resolves.toMatchObject({ ok: false, status: 400 });
+    }
+    await expect(verifyTurnstileServerToken('token', { verifyToken: jest.fn().mockRejectedValue(new Error('provider detail')), secret: 'server-secret' })).resolves.toMatchObject({ ok: false, status: 503 });
+    await expect(verifyTurnstileServerToken('token', { secret: '' })).resolves.toMatchObject({ ok: false, status: 503 });
+  });
 
-test('rejects missing and oversized tokens without contacting Cloudflare', async () => {
-  const verifyToken = jest.fn();
-  turnstileRoutes(app, verifyToken);
+  it('posts the token and backend secret directly to Cloudflare Siteverify', async () => {
+    const originalFetch = global.fetch;
+    global.fetch = jest.fn().mockResolvedValue({ ok: true, json: async () => ({ success: true }) });
+    try {
+      await verifyWithCloudflare('browser-token', 'backend-secret');
+      const [url, options] = global.fetch.mock.calls[0];
+      expect(url).toBe(TURNSTILE_SITEVERIFY_URL);
+      expect(options.body.get('response')).toBe('browser-token');
+      expect(options.body.get('secret')).toBe('backend-secret');
+    } finally { global.fetch = originalFetch; }
+  });
 
-  await request(app).post('/api/turnstile/verify').send({}).expect(400, { success: false });
-  await request(app).post('/api/turnstile/verify').send({ token: 'x'.repeat(2049) }).expect(400, { success: false });
-  expect(verifyToken).not.toHaveBeenCalled();
-});
-
-test('only returns success when Siteverify confirms the token', async () => {
-  const verifyToken = jest.fn().mockResolvedValue({ success: true, hostname: 'example.com' });
-  turnstileRoutes(app, verifyToken);
-
-  await request(app)
-    .post('/api/turnstile/verify')
-    .send({ token: 'temporary-token' })
-    .expect(200, { success: true });
-
-  expect(verifyToken).toHaveBeenCalledWith('temporary-token', 'server-only-test-secret');
-});
-
-test('accepts only an explicitly configured production hostname', async () => {
-  const verifyToken = jest.fn().mockResolvedValue({ success: true, hostname: 'bm-printing.vercel.app' });
-  await expect(verifyTurnstileServerToken('temporary-token', {
-    verifyToken, secret: 'server-only-test-secret', expectedHostnames: ['bm-printing.vercel.app']
-  })).resolves.toEqual({ ok: true });
-  await expect(verifyTurnstileServerToken('temporary-token', {
-    verifyToken: jest.fn().mockResolvedValue({ success: true, hostname: 'untrusted.example' }),
-    secret: 'server-only-test-secret', expectedHostnames: ['bm-printing.vercel.app']
-  })).resolves.toMatchObject({ ok: false, status: 400 });
-});
-
-test('rejects invalid Cloudflare tokens without returning provider details', async () => {
-  turnstileRoutes(app, jest.fn().mockResolvedValue({ success: false, 'error-codes': ['invalid-input-response'] }));
-
-  const response = await request(app)
-    .post('/api/turnstile/verify')
-    .send({ token: 'fake-token' })
-    .expect(400);
-
-  expect(response.body).toEqual({ success: false });
-  expect(JSON.stringify(response.body)).not.toContain('invalid-input-response');
-});
-
-test('calls Cloudflare Siteverify with the server-side secret and temporary token', async () => {
-  const fetchSpy = jest.fn().mockResolvedValue({ ok: true, status: 200, json: async () => ({ success: true }) });
-  global.fetch = fetchSpy;
-  turnstileRoutes(app);
-
-  await request(app)
-    .post('/api/turnstile/verify')
-    .send({ token: 'temporary-token' })
-    .expect(200, { success: true });
-
-  const [url, options] = fetchSpy.mock.calls[0];
-  expect(url).toBe('https://challenges.cloudflare.com/turnstile/v0/siteverify');
-  expect(options.method).toBe('POST');
-  expect(new URLSearchParams(options.body).get('secret')).toBe('server-only-test-secret');
-  expect(new URLSearchParams(options.body).get('response')).toBe('temporary-token');
-});
-
-test('returns a safe unavailable response when Cloudflare cannot be reached', async () => {
-  const logError = jest.spyOn(console, 'error').mockImplementation(() => {});
-  turnstileRoutes(app, jest.fn().mockRejectedValue(Object.assign(new Error('private provider detail'), { status: 503 })));
-
-  const response = await request(app)
-    .post('/api/turnstile/verify')
-    .send({ token: 'temporary-token' })
-    .expect(503);
-
-  expect(response.body).toEqual({ success: false, error: 'Security verification is temporarily unavailable. Please try again.' });
-  expect(JSON.stringify(response.body)).not.toContain('private provider detail');
-  expect(logError).toHaveBeenCalledWith('[Turnstile] Siteverify request failed: HTTP 503 Error');
-});
-
-test('shared client verifier accepts only successful backend responses', async () => {
-  global.fetch = jest.fn().mockResolvedValue({ ok: true, status: 200, json: async () => ({ success: true }) });
-  await expect(verifyTurnstileToken('temporary-token')).resolves.toBeUndefined();
-  expect(global.fetch).toHaveBeenCalledWith('/api/turnstile/verify', expect.objectContaining({
-    method: 'POST',
-    body: JSON.stringify({ token: 'temporary-token' })
-  }));
-
-  global.fetch = jest.fn().mockResolvedValue({ ok: false, status: 400, json: async () => ({ success: false }) });
-  await expect(verifyTurnstileToken('invalid-token')).rejects.toThrow(TURNSTILE_ERRORS.failed);
-
-  global.fetch = jest.fn().mockRejectedValue(new Error('network unavailable'));
-  await expect(verifyTurnstileToken('temporary-token')).rejects.toThrow(TURNSTILE_ERRORS.unavailable);
+  it('resets widgets after attempts and forwards CAPTCHA through Supabase actions', () => {
+    const widget = readFileSync('src/components/Common/TurnstileWidget.jsx', 'utf8');
+    const login = readFileSync('src/components/Pages/LoginPage.jsx', 'utf8');
+    const register = readFileSync('src/components/Pages/RegisterPage.jsx', 'utf8');
+    const phone = readFileSync('src/components/Common/PhoneOtpPanel.jsx', 'utf8');
+    const actions = readFileSync('src/utils/authActions.js', 'utf8');
+    expect(widget).toContain('window.turnstile?.reset');
+    for (const source of [login, register, phone]) expect(source).toMatch(/setCaptchaReset/);
+    expect(actions.match(/captchaToken/g).length).toBeGreaterThanOrEqual(3);
+  });
 });

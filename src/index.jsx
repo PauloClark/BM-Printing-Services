@@ -23,15 +23,18 @@ import { Toast } from "./components/Common/Toast";
 import { Spinner } from "./components/Common/Spinner";
 import { BMLogo } from "./components/Common/BMLogo";
 import { Chatbot } from "./components/Chatbot";
+import { EmailVerificationPage } from "./components/Pages/EmailVerificationPage";
 
-const PAGES = ['home', 'products', 'order', 'track', 'myorders', 'profile', 'contact', 'login', 'register', 'staff', 'admin'];
+const PAGES = ['home', 'products', 'order', 'track', 'myorders', 'profile', 'contact', 'login', 'register', 'verify-email', 'staff', 'admin'];
 const STAFF_CUSTOMER_PAGES = new Set(['home', 'products', 'order', 'track', 'myorders', 'contact']);
 const initialPage = () => {
   if (typeof window === 'undefined') return 'home';
   const hash = window.location.hash.replace(/^#\/?/, '');
+  const hashPage = hash.split('/')[0];
   const path = window.location.pathname.replace(/^\/|\/$/g, '');
   const pathPage = ({ 'track-order': 'track', 'my-orders': 'myorders' })[path] || path;
-  return PAGES.includes(hash) ? hash : PAGES.includes(pathPage) ? pathPage : 'home';
+  if (path === 'auth/confirm' || hash === 'verify-email' || hash.startsWith('error=') || hash.startsWith('error_code=')) return 'verify-email';
+  return PAGES.includes(hashPage) ? hashPage : PAGES.includes(pathPage) ? pathPage : 'home';
 };
 export default function App() {
   const [page, setCurrentPage] = useState(initialPage);
@@ -51,6 +54,7 @@ export default function App() {
   const [selectedProduct, setSelectedProduct] = useState(null);
   const [toast, setToast] = useState(null);
   const [loadingApp, setLoadingApp] = useState(true);
+  const [verificationConfirmed, setVerificationConfirmed] = useState(false);
   const protectedPageRedirect = !loadingApp && ['staff', 'admin'].includes(page) &&
     (!user || !canOpenDashboard(user.role, page));
   const renderedPage = user?.role === 'staff' && STAFF_CUSTOMER_PAGES.has(page)
@@ -106,13 +110,14 @@ export default function App() {
           next = supabaseAppUser(data.user);
           await store.del('session');
         } else if (event !== 'SIGNED_OUT') {
-          const legacy = await store.get('session');
-          if (legacy?.token) {
-            const { user: verified } = await orderApi('/api/auth/me', {}, legacy);
-            next = { ...legacy, ...verified };
-          }
+          // Authentication is Supabase-only. Clear any previous local JWT
+          // compatibility session instead of restoring MongoDB credentials.
+          await store.del('session');
         }
         if (!active || currentRevision !== revision) return;
+        if (initialPage() === 'verify-email' && next && event === 'SIGNED_IN') {
+          setVerificationConfirmed(true);
+        }
         const newlySignedIn = next && identity.current !== next.id;
         identity.current = next?.id || null;
         setUser(next);
@@ -288,6 +293,9 @@ export default function App() {
       )}
       {renderedPage === "register" && (
         <RegisterPage setPage={setPage} onLogin={completeSignIn} showToast={showToast} />
+      )}
+      {renderedPage === "verify-email" && (
+        <EmailVerificationPage setPage={setPage} verified={verificationConfirmed} loadingApp={loadingApp} />
       )}
       {renderedPage === "profile" && user && (
         <ProfilePage user={user} setUser={setUser} showToast={showToast} />

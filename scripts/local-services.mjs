@@ -4,11 +4,11 @@ import os from 'node:os';
 import net from 'node:net';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import dotenv from 'dotenv';
 import mongoose from 'mongoose';
 
 export const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-dotenv.config({ path: path.join(projectRoot, '.env') });
+// Keep the service launcher aligned with the backend's local env-file lookup.
+await import('../server/loadEnv.js');
 const stateRoot = path.join(process.env.LOCALAPPDATA || path.join(os.homedir(), '.local', 'share'), 'BMPrinting');
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 const portOpen = (host, port) => new Promise(resolve => {

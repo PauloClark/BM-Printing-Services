@@ -38,8 +38,10 @@
 .bm-catalog__purchase { margin-top: auto; display: flex; flex-direction: column; align-items: flex-start; }
 .bm-catalog__price { color: #8b1a1a; font: 800 25px/1.25 Montserrat, sans-serif; margin: 0 0 4px; }
 .bm-catalog__unit { margin: 0; font-size: 11px; line-height: 1.7; color: #766c70; }
-.bm-catalog__stock { color: #9a5a10; font-size: 11px; font-weight: 600; margin: 4px 0 0; }
-.bm-catalog__stock--empty { color: #a62626; }
+.bm-catalog__stock { color: #596778; font-size: 11px; font-weight: 700; margin: 4px 0 0; }
+.bm-catalog__stock--in-stock { color: #26734d; }
+.bm-catalog__stock--low-stock { color: #9a5a10; }
+.bm-catalog__stock--out-of-stock { color: #a62626; }
 .bm-catalog__purchase button { margin-top: 14px; align-self: flex-end; }
 .bm-catalog__empty { padding: 60px 20px; text-align: center; background: #ffffffb3; border: 1px dashed #e4cfd4; border-radius: 16px; }
 .bm-catalog__empty h2 { font-size: 20px; margin-bottom: 8px; }

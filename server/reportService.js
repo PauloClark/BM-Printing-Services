@@ -1,12 +1,6 @@
-import fs from 'fs/promises';
-import path from 'path';
-import { fileURLToPath } from 'url';
 import ExcelJS from 'exceljs';
 import { Order } from './db.js';
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-const REPORTS_DIR = path.resolve(process.env.ORDER_REPORTS_DIR || path.join(__dirname, '..', 'reports', 'orders'));
+import { isFulfilledOrderStatus } from '../shared/orderWorkflow.js';
 
 function toManilaDate(date) {
   return new Intl.DateTimeFormat('en-CA', {
@@ -58,20 +52,17 @@ function buildRows(orders) {
   });
 }
 
-async function ensureReportsDir() {
-  await fs.mkdir(REPORTS_DIR, { recursive: true });
-}
-
 // Generate daily summary data for AI
-function buildDailySummary(orders, dateString) {
+function buildDailySummary(orders, fulfilledOrders, dateString) {
   const totalOrders = orders.length;
-  const completedOrders = orders.filter(o => o.status === 'Completed').length;
+  const completedOrders = orders.filter(o => isFulfilledOrderStatus(o.status)).length;
   const pendingOrders = orders.filter(o => 
     o.status === 'Pending' || o.status === 'Quoted' || o.status === 'Confirmed' || o.status === 'Payment Pending'
   ).length;
   const cancelledOrders = orders.filter(o => o.status === 'Cancelled').length;
-  const revenue = orders.reduce((sum, order) => sum + Number(order.totalAmount || 0), 0);
-  const averageOrderValue = totalOrders > 0 ? revenue / totalOrders : 0;
+  const bookedOrderValue = orders.reduce((sum, order) => sum + Number(order.totalAmount || 0), 0);
+  const revenue = fulfilledOrders.reduce((sum, order) => sum + Number(order.totalAmount || 0), 0);
+  const averageOrderValue = totalOrders > 0 ? bookedOrderValue / totalOrders : 0;
 
   // Top service
   const serviceCounts = {};
@@ -109,6 +100,7 @@ function buildDailySummary(orders, dateString) {
     pendingOrders,
     cancelledOrders,
     revenue,
+    bookedOrderValue,
     averageOrderValue,
     topService,
     productionLoad,
@@ -121,15 +113,17 @@ export async function generateDailyReport(dateString, options = {}) {
     throw new Error('Invalid report date. Use YYYY-MM-DD.');
   }
 
-  await ensureReportsDir();
   const start = new Date(`${dateString}T00:00:00+08:00`);
   const end = new Date(`${dateString}T23:59:59.999+08:00`);
 
   const orders = await Order.find({
     createdAt: { $gte: start, $lte: end }
   }).sort({ createdAt: 1 });
+  const fulfilledOrders = await Order.find({
+    status: { $in: ['Picked Up', 'Completed'] },
+    $or: [{ pickedUpAt: { $gte: start, $lte: end } }, { completedAt: { $gte: start, $lte: end } }]
+  }).select('totalAmount').lean();
 
-  const filePath = path.join(REPORTS_DIR, `${dateString}.xlsx`);
   const workbook = new ExcelJS.Workbook();
   workbook.creator = 'BM Printing Services';
   workbook.lastModifiedBy = 'BM Printing Services';
@@ -182,17 +176,18 @@ export async function generateDailyReport(dateString, options = {}) {
   sheet.getColumn('subtotal').numFmt = '"₱"#,##0.00';
   sheet.getColumn('totalPrice').numFmt = '"₱"#,##0.00';
 
-  await workbook.xlsx.writeFile(filePath);
-  const summary = buildDailySummary(orders, dateString);
+  const data = Buffer.from(await workbook.xlsx.writeBuffer());
+  const summary = buildDailySummary(orders, fulfilledOrders, dateString);
 
   return {
-    filePath,
-    fileName: path.basename(filePath),
+    ...(options.includeData ? { data } : {}),
+    fileName: `${dateString}.xlsx`,
     totalOrders: summary.totalOrders,
     completedOrders: summary.completedOrders,
     pendingOrders: summary.pendingOrders,
     cancelledOrders: summary.cancelledOrders,
     totalSales: summary.revenue,
+    bookedOrderValue: summary.bookedOrderValue,
     averageOrderValue: summary.averageOrderValue,
     topService: summary.topService,
     productionLoad: summary.productionLoad,
@@ -206,23 +201,22 @@ export async function getReportSummary(dateString) {
     throw new Error('Invalid report date. Use YYYY-MM-DD.');
   }
 
-  const reportPath = path.join(REPORTS_DIR, `${dateString}.xlsx`);
-  let exists = false;
-  try {
-    await fs.access(reportPath);
-    exists = true;
-  } catch {
-    exists = false;
-  }
-
   const orders = await Order.find({
     createdAt: {
       $gte: new Date(`${dateString}T00:00:00+08:00`),
       $lte: new Date(`${dateString}T23:59:59.999+08:00`)
     }
   });
+  const fulfilledOrders = await Order.find({
+    status: { $in: ['Picked Up', 'Completed'] },
+    $or: [
+      { pickedUpAt: { $gte: new Date(`${dateString}T00:00:00+08:00`), $lte: new Date(`${dateString}T23:59:59.999+08:00`) } },
+      { completedAt: { $gte: new Date(`${dateString}T00:00:00+08:00`), $lte: new Date(`${dateString}T23:59:59.999+08:00`) } }
+    ]
+  }).select('totalAmount').lean();
 
-  const summary = buildDailySummary(orders, dateString);
+  const summary = buildDailySummary(orders, fulfilledOrders, dateString);
+  const exists = orders.length > 0;
 
   return {
     date: dateString,
@@ -230,6 +224,7 @@ export async function getReportSummary(dateString) {
     fileName: exists ? `${dateString}.xlsx` : null,
     totalOrders: summary.totalOrders,
     totalSales: summary.revenue,
+    bookedOrderValue: summary.bookedOrderValue,
     averageOrderValue: summary.averageOrderValue,
     topService: summary.topService,
     completedOrders: summary.completedOrders,
@@ -244,9 +239,8 @@ export async function readReportFile(dateString) {
     throw new Error('Invalid report date. Use YYYY-MM-DD.');
   }
 
-  const filePath = path.join(REPORTS_DIR, `${dateString}.xlsx`);
-  const data = await fs.readFile(filePath);
-  return { filePath, data };
+  const report = await generateDailyReport(dateString, { includeData: true });
+  return { fileName: report.fileName, data: report.data };
 }
 
 export function getDefaultReportDate() {

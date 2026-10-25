@@ -11,7 +11,9 @@ export function hasOrderReturn() {
   } catch { return false; }
 }
 export function authCallbackUrl() {
-  return window.location.origin + (hasOrderReturn() ? '/?authReturn=order' : '');
+  const configuredOrigin = String(import.meta.env?.VITE_PUBLIC_APP_URL || '').trim().replace(/\/+$/, '');
+  const origin = configuredOrigin || window.location.origin;
+  return origin + '/auth/confirm' + (hasOrderReturn() ? '?authReturn=order' : '');
 }
 export function consumeAuthDestination(role) {
   const returnToOrder = hasOrderReturn();

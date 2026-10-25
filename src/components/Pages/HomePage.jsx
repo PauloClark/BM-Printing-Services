@@ -7,6 +7,7 @@ import { Card } from "../Common/Card";
 import "./HomePage.css";
 import { publicAsset } from '../../utils/assets';
 import { catalogSource } from '../../utils/catalogSource';
+import { apiUrl } from '../../utils/orderApi';
 
 // Home preview assets only; shared product records and other pages remain unchanged.
 const HOME_CUTOUTS = {
@@ -70,7 +71,7 @@ export const HomePage = ({ setPage, reviews }) => {
 
   useEffect(() => {
     let active = true;
-    fetch("/api/products")
+    fetch(apiUrl("/api/products"))
       .then(response => response.ok ? response.json() : null)
       .then(data => {
         const source = catalogSource(data, PRODUCTS);

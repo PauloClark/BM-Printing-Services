@@ -2,9 +2,10 @@ import { canTransitionOrder } from '../shared/orderWorkflow.js';
 import mongoose from 'mongoose';
 import bcrypt from 'bcryptjs';
 import { MongoMemoryServer } from 'mongodb-memory-server';
+import { QA_DATABASE_NAME, validateQaMongoConfig, validateQaReplicaSetHello } from './qaMongoGuard.js';
 
 const DEFAULT_ADMIN_EMAIL = process.env.ADMIN_EMAIL || 'admin@bm.com';
-const DEFAULT_ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'admin123';
+const DEFAULT_ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || '';
 
 const userSchema = new mongoose.Schema(
   {
@@ -25,6 +26,15 @@ const employeeSchema = new mongoose.Schema({
   email: { type: String, required: true, trim: true, lowercase: true, maxlength: 254 },
   phone: { type: String, default: '', trim: true, maxlength: 30 },
   position: { type: String, default: 'Production Staff', trim: true, maxlength: 100 },
+  // Legacy employee records use these names. Keep them readable while the
+  // current API serializes the same records through the canonical fields.
+  employeeRole: { type: String, default: '' },
+  linkedUserId: { type: String, default: '', trim: true },
+  linkedEmail: { type: String, default: '', trim: true, lowercase: true },
+  linkedAt: { type: Date, default: null },
+  linkedBy: { type: String, default: '' },
+  archived: { type: Boolean, default: false },
+  passwordChangedAt: { type: Date, default: null },
   active: { type: Boolean, default: true },
   supabaseUserId: { type: String, default: null, trim: true },
   mustChangePassword: { type: Boolean, default: false },
@@ -34,8 +44,19 @@ const employeeSchema = new mongoose.Schema({
   },
   createdBy: { type: String, required: true }
 }, { timestamps: true });
-employeeSchema.index({ email: 1 }, { unique: true });
-employeeSchema.index({ supabaseUserId: 1 }, { unique: true, sparse: true });
+// Legacy roster rows store this value as linkedEmail; don't treat their
+// missing canonical email field as duplicate null keys in the unique index.
+employeeSchema.index({ email: 1 }, {
+  name: 'employee_email_unique_nonempty', unique: true,
+  partialFilterExpression: { email: { $type: 'string', $gt: '' } }
+});
+employeeSchema.index({ supabaseUserId: 1 }, {
+  name: 'supabaseUserId_unique_nonempty', unique: true,
+  partialFilterExpression: { supabaseUserId: { $type: 'string', $gt: '' } }
+});
+// Employee indexes are migrated explicitly on connect so the legacy sparse
+// unique index can be safely replaced before Mongoose attempts index creation.
+employeeSchema.set('autoIndex', false);
 
 const productSchema = new mongoose.Schema(
   {
@@ -56,9 +77,11 @@ const productSchema = new mongoose.Schema(
     imageFit: { type: String, enum: ['contain', 'cover'], default: 'contain' },
     popular: { type: Boolean, default: false },
     trackStock: { type: Boolean, default: false },
+    specificationFields: { type: [mongoose.Schema.Types.Mixed], default: [] },
+    stockReservations: { type: [{ orderId: String, quantity: Number }], default: [] },
     specificationType: { type: String, enum: ['clothing', 'hoodie', 'schoolId', 'banner', 'mug', 'sticker', 'backdrop', 'general'], default: 'general' },
-    stock: { type: Number, default: 0 },
-    lowStockThreshold: { type: Number, default: 10 }
+    stock: { type: Number, default: 0, min: 0, validate: { validator: Number.isSafeInteger, message: 'Stock must be a nonnegative whole number.' } },
+    lowStockThreshold: { type: Number, default: 5 }
   },
   { timestamps: true }
 );
@@ -72,6 +95,47 @@ const inventorySchema = new mongoose.Schema(
     unit: { type: String, default: 'pcs' },
     minimumStockLevel: { type: Number, default: 10 },
     costPerUnit: { type: Number, default: 0 },
+    costBasisKnown: { type: Boolean, default: false },
+    costBasisUpdatedAt: { type: Date, default: null },
+    costBasisUpdatedBy: { type: String, default: '' },
+    costBasisAudit: [{
+      previousCostPerUnit: { type: Number, default: null },
+      costPerUnit: { type: Number, required: true },
+      reason: { type: String, required: true, maxlength: 500 },
+      updatedBy: { type: String, required: true },
+      updatedAt: { type: Date, required: true }
+    }],
+    purchaseHistory: [{
+      purchaseId: { type: String, required: true },
+      purchasedAt: { type: Date, required: true },
+      quantity: { type: Number, required: true, min: 0.001 },
+      totalCostCents: { type: Number, required: true, min: 1 },
+      paidAmountCents: { type: Number, required: true, min: 0 },
+      paidAt: { type: Date, default: null },
+      supplier: { type: String, default: '', maxlength: 150 },
+      reference: { type: String, default: '', maxlength: 100 },
+      notes: { type: String, default: '', maxlength: 500 },
+      recordedBy: { type: String, required: true },
+      recordedByName: { type: String, default: '' },
+      recordedAt: { type: Date, required: true }
+    }],
+    materialReservations: [{
+      reservationId: { type: String, required: true }, operationId: { type: String, required: true },
+      jobOrderId: { type: String, required: true }, orderId: { type: String, required: true },
+      quantity: { type: Number, required: true, min: 0.001 }, usedQuantity: { type: Number, default: 0, min: 0 },
+      wastedQuantity: { type: Number, default: 0, min: 0 }, releasedQuantity: { type: Number, default: 0, min: 0 },
+      status: { type: String, enum: ['RESERVED', 'FINALIZED', 'RELEASED'], default: 'RESERVED' },
+      unitCostSnapshot: { type: Number, default: null, min: 0 }, costDataComplete: { type: Boolean, default: false },
+      actorId: { type: String, default: '' }, releasedBy: { type: String, default: '' }, releaseReason: { type: String, default: '', maxlength: 500 },
+      releasedAt: { type: Date, default: null }, finalizedBy: { type: String, default: '' },
+      wasteReason: { type: String, default: '', maxlength: 500 }, movementKeys: { type: [String], default: [] },
+      createdAt: { type: Date, default: Date.now }, finalizedAt: { type: Date, default: null }, updatedAt: { type: Date, default: Date.now }
+    }],
+    stockAdjustments: [{
+      requestId: { type: String, required: true }, previousQuantity: { type: Number, required: true },
+      quantity: { type: Number, required: true }, reason: { type: String, required: true, maxlength: 500 },
+      actorId: { type: String, required: true }, timestamp: { type: Date, required: true }
+    }],
     supplier: { type: String, default: '' },
     lastRestocked: { type: Date, default: null },
     notes: { type: String, default: '' }
@@ -83,6 +147,114 @@ const productionSchema = new mongoose.Schema(
   {
     phase3: { type: Boolean },
     jobOrderId: { type: String },
+    // Missing on legacy records; treated as version 0 by reassignment CAS.
+    assignmentVersion: { type: Number, default: 0, min: 0 },
+    assignmentHistory: [{
+      requestId: { type: String, required: true },
+      previousAssignedEmployee: { type: String, required: true },
+      previousAssignedEmployeeName: { type: String, default: '' },
+      newAssignedEmployee: { type: String, required: true },
+      newAssignedEmployeeName: { type: String, default: '' },
+      reason: { type: String, required: true, maxlength: 1000 },
+      actorId: { type: String, required: true },
+      actorName: { type: String, default: '' },
+      timestamp: { type: Date, required: true },
+      fromVersion: { type: Number, required: true, min: 0 },
+      toVersion: { type: Number, required: true, min: 1 },
+      materialUsageSnapshot: { type: mongoose.Schema.Types.Mixed, default: null },
+      materialUsageSubmittedBy: { type: String, default: '' },
+      materialUsageSubmittedAt: { type: Date, default: null }
+    }],
+    notificationOutbox: [{
+      eventKey: { type: String, required: true }, recipientId: { type: String, required: true },
+      recipientRole: { type: String, enum: ['admin', 'staff', 'customer'], required: true },
+      type: { type: String, required: true }, title: { type: String, required: true }, message: { type: String, required: true },
+      relatedOrderId: { type: String, default: '' }, relatedJobId: { type: String, default: '' }, targetPage: { type: String, default: '' },
+      state: { type: String, enum: ['PENDING', 'PROCESSING', 'DELIVERED', 'FAILED'], default: 'PENDING' },
+      attempts: { type: Number, default: 0, min: 0 }, lastAttemptAt: { type: Date, default: null }, nextAttemptAt: { type: Date, default: null },
+      manualRetryCount: { type: Number, default: 0, min: 0 },
+      lockedUntil: { type: Date, default: null }, lockToken: { type: String, default: '' }, deliveryHistory: { type: [mongoose.Schema.Types.Mixed], default: [] },
+      createdAt: { type: Date, required: true }, deliveredAt: { type: Date, default: null }, lastError: { type: String, default: '', maxlength: 300 }
+    }],
+    reassignmentNotificationOutbox: [{
+      requestId: { type: String, required: true },
+      eventKey: { type: String, required: true },
+      recipientKind: { type: String, enum: ['previous', 'new'], required: true },
+      recipientId: { type: String, required: true },
+      recipientRole: { type: String, enum: ['staff'], required: true },
+      type: { type: String, required: true },
+      title: { type: String, required: true },
+      message: { type: String, required: true },
+      relatedOrderId: { type: String, default: '' },
+      relatedJobId: { type: String, default: '' },
+      targetPage: { type: String, default: 'staff' },
+      state: { type: String, enum: ['PENDING', 'PROCESSING', 'DELIVERED', 'FAILED'], default: 'PENDING' },
+      attempts: { type: Number, default: 0, min: 0 },
+      manualRetryCount: { type: Number, default: 0, min: 0 },
+      lastAttemptAt: { type: Date, default: null }, nextAttemptAt: { type: Date, default: null },
+      lockedUntil: { type: Date, default: null }, lockToken: { type: String, default: '' },
+      deliveryHistory: { type: [mongoose.Schema.Types.Mixed], default: [] },
+      createdAt: { type: Date, required: true },
+      deliveredAt: { type: Date, default: null },
+      lastError: { type: String, default: '', maxlength: 300 }
+    }],
+    exceptionHistory: [{
+      exceptionId: { type: String, required: true },
+      requestId: { type: String, required: true },
+      type: { type: String, enum: ['DELAYED', 'BLOCKED', 'PAUSED', 'FAILED'], required: true },
+      reason: { type: String, required: true, maxlength: 1000 },
+      notes: { type: String, default: '', maxlength: 2000 },
+      previousStatus: { type: String, required: true },
+      reportedBy: { type: String, required: true },
+      reportedByName: { type: String, default: '' },
+      reportedByRole: { type: String, enum: ['admin', 'staff'], required: true },
+      reportedAt: { type: Date, required: true },
+      resolutionStatus: { type: String, enum: ['ACTIVE', 'RESOLVED'], default: 'ACTIVE' },
+      resolvedBy: { type: String, default: '' },
+      resolvedByName: { type: String, default: '' },
+      resolutionAction: { type: String, enum: ['RESUME', 'RETURN_FOR_CORRECTION', ''], default: '' },
+      resolutionNotes: { type: String, default: '', maxlength: 2000 },
+      resolvedAt: { type: Date, default: null },
+      resolvedFromStatus: { type: String, default: '' },
+      resolvedToStatus: { type: String, default: '' }
+    }],
+    exceptionNotificationOutbox: [{
+      exceptionId: { type: String, required: true },
+      eventKey: { type: String, required: true },
+      recipientId: { type: String, required: true },
+      recipientRole: { type: String, enum: ['admin', 'staff'], required: true },
+      type: { type: String, required: true },
+      title: { type: String, required: true },
+      message: { type: String, required: true },
+      targetPage: { type: String, default: 'admin' },
+      state: { type: String, enum: ['PENDING', 'PROCESSING', 'DELIVERED', 'FAILED'], default: 'PENDING' },
+      attempts: { type: Number, default: 0, min: 0 },
+      manualRetryCount: { type: Number, default: 0, min: 0 },
+      lastAttemptAt: { type: Date, default: null }, nextAttemptAt: { type: Date, default: null },
+      lockedUntil: { type: Date, default: null }, lockToken: { type: String, default: '' },
+      deliveryHistory: { type: [mongoose.Schema.Types.Mixed], default: [] },
+      createdAt: { type: Date, required: true },
+      deliveredAt: { type: Date, default: null },
+      lastError: { type: String, default: '', maxlength: 300 }
+    }],
+    assignmentRequestId: { type: String, default: undefined },
+    materialPlanVersion: { type: Number, default: null },
+    materialPlanMode: { type: String, enum: ['MATERIALS', 'NO_MANAGED_MATERIALS', null], default: null },
+    noMaterialsReason: { type: String, default: '', maxlength: 500 },
+    materialOperationState: { type: String, enum: ['PREPARING', 'RESERVATION_PENDING', 'RESERVED', 'CONSUMPTION_PENDING', 'FINALIZED', 'RECONCILIATION_REQUIRED', 'RELEASED', 'NOT_REQUIRED', 'FAILED_RELEASED', null], default: null },
+    materialOperationKind: { type: String, enum: ['ASSIGNMENT', 'ADDITIONAL_RESERVATION', 'FINALIZATION', ''], default: '' },
+    materialOperationId: { type: String, default: '' },
+    materialRecoveryAction: { type: String, enum: ['RELEASE_RESERVATIONS', 'FINALIZE_USAGE', 'NONE', ''], default: '' },
+    materialOperationError: { type: String, default: '', maxlength: 500 },
+    materialUsage: { type: mongoose.Schema.Types.Mixed, default: null },
+    materialUsageSubmittedAt: { type: Date, default: null },
+    materialUsageSubmittedBy: { type: String, default: '' },
+    materialUsageSubmittedAssignmentVersion: { type: Number, default: null },
+    materialUsageReviewRequired: { type: Boolean, default: false },
+    materialUsageReviewedBy: { type: String, default: '' },
+    materialUsageReviewedAt: { type: Date, default: null },
+    materialFinalizationOperationId: { type: String, default: '' },
+    materialFinalizedAt: { type: Date, default: null },
     assignedEmployeeName: { type: String },
     dateAssigned: { type: Date },
     assignedBy: { type: String },
@@ -103,10 +275,15 @@ const productionSchema = new mongoose.Schema(
     readyForPickupBy: { type: String, default: '' },
     reservedMaterials: [{
       inventoryId: { type: mongoose.Schema.Types.ObjectId, ref: 'Inventory', required: true },
+      reservationId: { type: String, default: '' },
+      operationId: { type: String, default: '' },
       material: { type: String, required: true },
       unit: { type: String, required: true },
       quantity: { type: Number, required: true, min: 0.001 },
-      reservationStatus: { type: String, enum: ['reserved', 'consumed', 'released'], default: 'reserved' }
+      reservationStatus: { type: String, enum: ['pending', 'reserved', 'consumed', 'released'], default: 'reserved' },
+      unitCostSnapshot: { type: Number, default: null, min: 0 },
+      directCostCents: { type: Number, default: null, min: 0 },
+      costDataComplete: { type: Boolean, default: false }
     }],
     orderId: { type: String, required: true },
     status: { type: String, enum: ['Assigned', 'Acknowledged', 'In Progress', 'Submitted for Review', 'Correction Required', 'Approved', 'Ready for Pickup', 'Queueing', 'Pending', 'Queued', 'In Production', 'Quality Check', 'Ready', 'Completed', 'Delayed', 'Cancelled'], default: 'Pending' },
@@ -134,6 +311,10 @@ const productionSchema = new mongoose.Schema(
 // Existing production rows are preserved; uniqueness applies only to new job orders.
 productionSchema.index({ jobOrderId: 1 }, { unique: true, partialFilterExpression: { phase3: true } });
 productionSchema.index({ orderId: 1 }, { unique: true, partialFilterExpression: { phase3: true } });
+productionSchema.index({ assignmentRequestId: 1 }, { unique: true, sparse: true });
+productionSchema.index({ 'notificationOutbox.state': 1, 'notificationOutbox.nextAttemptAt': 1 });
+productionSchema.index({ 'reassignmentNotificationOutbox.state': 1, 'reassignmentNotificationOutbox.nextAttemptAt': 1 });
+productionSchema.index({ 'exceptionNotificationOutbox.state': 1, 'exceptionNotificationOutbox.nextAttemptAt': 1 });
 
 const orderItemSchema = new mongoose.Schema(
   {
@@ -170,7 +351,10 @@ const paymentSubmissionSchema = new mongoose.Schema({
   verifiedBy: { type: String, default: '' },
   rejectedAt: { type: Date, default: null },
   rejectedBy: { type: String, default: '' },
-  rejectionReason: { type: String, default: '', maxlength: 500 }
+  rejectionReason: { type: String, default: '', maxlength: 500 },
+  reconciliationAt: { type: Date, default: null },
+  reconciliationBy: { type: String, default: '' },
+  reconciliationNote: { type: String, default: '', maxlength: 1000 }
 });
 
 const orderSchema = new mongoose.Schema(
@@ -181,13 +365,47 @@ const orderSchema = new mongoose.Schema(
     jobOrderId: { type: String },
     specs: { type: String, default: '' },
     customerName: { type: String, required: true },
-    customerEmail: { type: String, required: true, lowercase: true },
+    customerEmail: { type: String, default: '', lowercase: true },
+    orderSource: { type: String, enum: ['online', 'walk_in'], default: 'online' },
+    createdBy: { type: String, default: '' },
+    fulfillmentMethod: { type: String, enum: ['pickup', 'delivery'], default: 'pickup' },
+    specificationDetails: { type: mongoose.Schema.Types.Mixed, default: {} },
+    cashPayment: { amount: Number, verifiedBy: String, verifiedAt: Date },
+    paymentAudit: { type: [mongoose.Schema.Types.Mixed], default: [] },
+    financialResolution: {
+      status: { type: String, enum: ['NONE', 'REFUND_REQUIRED', 'REFUND_PENDING', 'REFUND_COMPLETED', 'CREDIT_ISSUED', 'NO_REFUND_APPLICABLE'], default: 'NONE' },
+      resolutionId: { type: String, default: '' },
+      originalVerifiedAmountCents: { type: Number, default: 0 },
+      accountedAmountCents: { type: Number, default: 0 },
+      resolutionType: { type: String, default: '' },
+      reason: { type: String, default: '' },
+      referenceNumber: { type: String, default: '' },
+      resolutionDate: { type: Date, default: null },
+      resolvedBy: { type: String, default: '' },
+      evidenceName: { type: String, default: '' },
+      confirmation: { type: String, default: '' }
+    },
+    financialResolutionEvents: { type: [mongoose.Schema.Types.Mixed], default: [] },
+    notificationOutbox: [{
+      eventKey: { type: String, required: true }, recipientId: { type: String, required: true },
+      recipientRole: { type: String, enum: ['customer', 'staff', 'admin'], required: true },
+      type: { type: String, required: true }, title: { type: String, required: true }, message: { type: String, required: true },
+      relatedOrderId: { type: String, default: '' }, relatedJobId: { type: String, default: '' }, targetPage: { type: String, default: '' },
+      state: { type: String, enum: ['PENDING', 'PROCESSING', 'DELIVERED', 'FAILED'], default: 'PENDING' },
+      attempts: { type: Number, default: 0, min: 0 }, lastAttemptAt: { type: Date, default: null }, nextAttemptAt: { type: Date, default: null },
+      manualRetryCount: { type: Number, default: 0, min: 0 },
+      lockedUntil: { type: Date, default: null }, lockToken: { type: String, default: '' },
+      deliveryHistory: { type: [mongoose.Schema.Types.Mixed], default: [] },
+      createdAt: { type: Date, required: true }, deliveredAt: { type: Date, default: null }, lastError: { type: String, default: '', maxlength: 300 }
+    }],
+    cancellationAudit: { type: [mongoose.Schema.Types.Mixed], default: [] },
+    stockReleaseStatus: { type: String, enum: ['NOT_REQUIRED', 'PENDING', 'COMPLETED'], default: 'NOT_REQUIRED' },
     contactNumber: { type: String, default: '' },
     address: { type: String, default: '' },
     items: [orderItemSchema],
     totalAmount: { type: Number, required: true },
     paymentMethod: { type: String, default: '' },
-    paymentStatus: { type: String, enum: ['Unpaid', 'For Verification', 'Verified', 'Rejected'], default: 'Unpaid' },
+    paymentStatus: { type: String, enum: ['Unpaid', 'pending', 'For Verification', 'Verified', 'Rejected'], default: 'Unpaid' },
     paymentRejectionReason: { type: String, default: '' },
     paymentSubmissions: { type: [paymentSubmissionSchema], default: [] },
     status: { type: String, enum: ['Pending', 'Quoted', 'Confirmed', 'Payment Pending', 'Paid', 'Queued', 'In Production', 'Quality Check', 'Ready', 'Processing', 'Ready for Pickup', 'Picked Up', 'Completed', 'Cancelled'], default: 'Pending' },
@@ -212,6 +430,8 @@ const orderSchema = new mongoose.Schema(
   },
   { timestamps: true }
 );
+
+orderSchema.index({ 'notificationOutbox.state': 1, 'notificationOutbox.nextAttemptAt': 1 });
 
 const orderFileSchema = new mongoose.Schema(
   {
@@ -240,7 +460,31 @@ const contactMessageSchema = new mongoose.Schema(
     // Stored and rendered as plain text only.
     message: { type: String, required: true },
     senderType: { type: String, enum: ['guest', 'customer'], default: 'guest' },
-    status: { type: String, enum: ['new', 'read', 'resolved'], default: 'new' },
+    status: { type: String, enum: ['new', 'read', 'awaiting_staff', 'awaiting_customer', 'resolved'], default: 'new' },
+    replies: [{
+      replyId: { type: String, required: true }, requestId: { type: String, required: true },
+      message: { type: String, required: true, maxlength: 3000 }, authorId: { type: String, required: true },
+      authorName: { type: String, required: true }, authorRole: { type: String, enum: ['customer', 'staff', 'admin'], required: true },
+      createdAt: { type: Date, required: true }
+    }],
+    internalNotes: [{
+      noteId: { type: String, required: true }, requestId: { type: String, required: true },
+      message: { type: String, required: true, maxlength: 3000 }, authorId: { type: String, required: true },
+      authorName: { type: String, required: true }, authorRole: { type: String, enum: ['staff', 'admin'], required: true },
+      createdAt: { type: Date, required: true }
+    }],
+    notificationOutbox: [{
+      eventKey: { type: String, required: true }, recipientId: { type: String, required: true },
+      recipientRole: { type: String, enum: ['customer', 'admin'], required: true },
+      title: { type: String, required: true }, message: { type: String, required: true },
+      state: { type: String, enum: ['PENDING', 'PROCESSING', 'DELIVERED', 'FAILED'], default: 'PENDING' },
+      attempts: { type: Number, default: 0, min: 0 }, lastAttemptAt: { type: Date, default: null }, nextAttemptAt: { type: Date, default: null },
+      manualRetryCount: { type: Number, default: 0, min: 0 },
+      lockedUntil: { type: Date, default: null }, lockToken: { type: String, default: '' },
+      deliveryHistory: { type: [mongoose.Schema.Types.Mixed], default: [] },
+      lastError: { type: String, default: '', maxlength: 300 }, createdAt: { type: Date, required: true }, deliveredAt: { type: Date, default: null }
+    }],
+    lastActivityAt: { type: Date, default: null },
     readAt: { type: Date, default: null },
     resolvedAt: { type: Date, default: null }
   },
@@ -250,6 +494,7 @@ const contactMessageSchema = new mongoose.Schema(
 contactMessageSchema.index({ createdAt: -1 });
 contactMessageSchema.index({ status: 1, createdAt: -1 });
 contactMessageSchema.index({ userId: 1 });
+contactMessageSchema.index({ userId: 1, createdAt: -1 });
 
 const auditLogSchema = new mongoose.Schema(
   {
@@ -286,22 +531,54 @@ notificationSchema.index({ recipientId: 1, createdAt: -1 });
 
 const stockMovementSchema = new mongoose.Schema(
   {
-    orderId: { type: String, required: true },
-    jobOrderId: { type: String, required: true },
+    orderId: { type: String, default: '' },
+    jobOrderId: { type: String, default: '' },
     inventoryId: { type: mongoose.Schema.Types.ObjectId, ref: 'Inventory', required: true },
     material: { type: String, required: true },
     materialType: { type: String, default: '' },
     unit: { type: String, default: 'pcs' },
     quantity: { type: Number, required: true, min: 0.001 },
-    movementType: { type: String, enum: ['IN', 'OUT'], required: true },
-    reason: { type: String, enum: ['RESTOCK', 'ORDER_PICKUP', 'ADJUSTMENT', 'OTHER'], required: true },
+    movementType: { type: String, enum: ['IN', 'OUT', 'RESERVE', 'RELEASE', 'WASTE'], required: true },
+    reason: { type: String, enum: ['RESTOCK', 'ORDER_PICKUP', 'PRODUCTION_RESERVATION', 'PRODUCTION_RELEASE', 'PRODUCTION_USE', 'PRODUCTION_WASTE', 'ADJUSTMENT', 'OTHER'], required: true },
     performedBy: { type: String, required: true },
     performedByName: { type: String, default: '' },
     receivedByName: { type: String, default: null },
-    notes: { type: String, default: '' }
+    idempotencyKey: { type: String, default: undefined },
+    notes: { type: String, default: '' },
+    unitCostSnapshot: { type: Number, default: null, min: 0 },
+    directCostCents: { type: Number, default: null, min: 0 },
+    costDataComplete: { type: Boolean, default: false }
   },
   { timestamps: true }
 );
+
+stockMovementSchema.index({ idempotencyKey: 1 }, { unique: true, sparse: true });
+
+const expenseSchema = new mongoose.Schema({
+  expenseDate: { type: Date, required: true, index: true },
+  category: { type: String, required: true, enum: ['Utilities', 'Rent', 'Payroll', 'Delivery', 'Maintenance', 'Supplies', 'Marketing', 'Other'] },
+  description: { type: String, required: true, trim: true, maxlength: 500 },
+  amountCents: { type: Number, required: true, min: 1 },
+  paymentStatus: { type: String, required: true, enum: ['Paid', 'Unpaid'], default: 'Paid' },
+  paidAmountCents: { type: Number, required: true, min: 0, default: 0 },
+  paidAt: { type: Date, default: null },
+  paymentMethod: { type: String, default: '', maxlength: 50 },
+  reference: { type: String, default: '', maxlength: 100 },
+  status: { type: String, enum: ['Active', 'Voided'], default: 'Active', index: true },
+  voidReason: { type: String, default: '', maxlength: 500 },
+  recordedBy: { type: String, required: true },
+  recordedByName: { type: String, default: '' },
+  updatedBy: { type: String, default: '' },
+  updatedAt: { type: Date, default: null },
+  auditHistory: [{
+    action: { type: String, required: true },
+    userId: { type: String, required: true },
+    userName: { type: String, default: '' },
+    timestamp: { type: Date, required: true },
+    reason: { type: String, default: '', maxlength: 500 }
+  }]
+}, { timestamps: true });
+expenseSchema.index({ expenseDate: -1, status: 1 });
 
 orderSchema.methods.serialize = function() {
   const firstItem = this.items?.[0] || {};
@@ -424,26 +701,64 @@ const Order = mongoose.model('Order', orderSchema);
 const OrderFile = mongoose.model('OrderFile', orderFileSchema);
 const AuditLog = mongoose.model('AuditLog', auditLogSchema);
 const StockMovement = mongoose.model('StockMovement', stockMovementSchema);
+const Expense = mongoose.model('Expense', expenseSchema);
 const ContactMessage = mongoose.model('ContactMessage', contactMessageSchema);
 const Employee = mongoose.model('Employee', employeeSchema);
 const Notification = mongoose.model('Notification', notificationSchema);
 
 let mongoConnectionPromise;
 
+export async function ensureEmployeeIndexes() {
+  try { await Employee.createCollection(); }
+  catch (error) { if (error.codeName !== 'NamespaceExists' && error.code !== 48) throw error; }
+
+  const indexes = await Employee.collection.indexes();
+  const accountIndexes = indexes.filter(index => index.key?.supabaseUserId === 1);
+  const hasDesiredIndex = accountIndexes.some(index => index.unique &&
+    index.partialFilterExpression?.supabaseUserId?.$type === 'string' &&
+    index.partialFilterExpression.supabaseUserId.$gt === '');
+  if (!hasDesiredIndex) {
+    const duplicate = await Employee.aggregate([
+      { $match: { supabaseUserId: { $type: 'string', $gt: '' } } },
+      { $group: { _id: '$supabaseUserId', count: { $sum: 1 } } },
+      { $match: { count: { $gt: 1 } } }, { $limit: 1 }
+    ]);
+    if (duplicate.length) throw new Error(`Duplicate staff account link ${duplicate[0]._id} exists on multiple employees; resolve it before enabling unique account links.`);
+    for (const index of accountIndexes) await Employee.collection.dropIndex(index.name);
+  }
+  await Employee.createIndexes();
+}
+
 export async function connectMongo() {
-  if (mongoose.connection.readyState === 1) return mongoose.connection;
+  const qaMode = process.env.BM_QA_MODE === 'true';
+  const uri = process.env.MONGODB_URI || (qaMode ? '' : 'mongodb://127.0.0.1:27017/bmprinting');
+  const dbName = process.env.MONGODB_DB_NAME || undefined;
+  if (qaMode) validateQaMongoConfig(uri, dbName, process.env.BM_QA_MONGO_ADDRESS);
+  if (mongoose.connection.readyState === 1) {
+    if (qaMode) {
+      if (mongoose.connection.name !== QA_DATABASE_NAME || `${mongoose.connection.host}:${mongoose.connection.port}` !== process.env.BM_QA_MONGO_ADDRESS) {
+        throw new Error('QA mode detected an existing MongoDB connection outside the disposable database.');
+      }
+      validateQaReplicaSetHello(await mongoose.connection.db.admin().command({ hello: 1 }), process.env.BM_QA_MONGO_ADDRESS);
+    }
+    return mongoose.connection;
+  }
   if (mongoConnectionPromise) return mongoConnectionPromise;
-  const uri = process.env.MONGODB_URI || 'mongodb://127.0.0.1:27017/bmprinting';
   if (process.env.NODE_ENV === 'production' && !process.env.MONGODB_URI) {
     throw new Error('MONGODB_URI is required in production. Configure an Atlas replica-set connection string.');
   }
   mongoConnectionPromise = (async () => {
     try {
       await mongoose.connect(uri, {
-        dbName: process.env.MONGODB_DB_NAME || undefined,
+        dbName,
         maxPoolSize: Number(process.env.MONGODB_MAX_POOL_SIZE || 10),
         serverSelectionTimeoutMS: Number(process.env.MONGODB_SERVER_SELECTION_TIMEOUT_MS || 10000)
       });
+      if (qaMode) {
+        const hello = await mongoose.connection.db.admin().command({ hello: 1 });
+        validateQaReplicaSetHello(hello, process.env.BM_QA_MONGO_ADDRESS);
+      }
+      await ensureEmployeeIndexes();
       console.log('Connected to MongoDB.');
       return mongoose.connection;
     } catch (error) {
@@ -459,6 +774,7 @@ export async function connectMongo() {
 }
 
 export async function seedCatalogAndAdmin() {
+  if (!DEFAULT_ADMIN_PASSWORD) throw new Error("Explicit Admin bootstrap password required.");
   try {
     const existingAdmin = await User.findOne({ email: DEFAULT_ADMIN_EMAIL });
     if (!existingAdmin) {
@@ -478,4 +794,4 @@ export async function seedCatalogAndAdmin() {
   }
 }
 
-export { User, Employee, Product, Order, Inventory, Production, OrderFile, AuditLog, Notification, StockMovement, ContactMessage, DEFAULT_ADMIN_EMAIL, DEFAULT_ADMIN_PASSWORD };
+export { User, Employee, Product, Order, Inventory, Production, OrderFile, AuditLog, Notification, StockMovement, Expense, ContactMessage, DEFAULT_ADMIN_EMAIL, DEFAULT_ADMIN_PASSWORD };

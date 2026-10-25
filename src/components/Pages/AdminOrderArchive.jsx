@@ -20,6 +20,7 @@ export function ArchivedOrders({ user }) {
   const [loading, setLoading] = useState(true);
   const [detailLoading, setDetailLoading] = useState(false);
   const [error, setError] = useState('');
+  const [restoring, setRestoring] = useState(false);
   const [refresh, setRefresh] = useState(0);
   const [revision, setRevision] = useState(0);
 
@@ -58,6 +59,22 @@ export function ArchivedOrders({ user }) {
       setSelected(null);
     } finally {
       setDetailLoading(false);
+    }
+  };
+
+  const restoreOrder = async () => {
+    const orderId = selected?.order?.id || selected?.orderId;
+    if (!orderId || restoring) return;
+    setRestoring(true);
+    setError('');
+    try {
+      await orderApi(`/api/admin/orders/${encodeURIComponent(orderId)}/restore`, { method: 'POST' }, user);
+      setSelected(null);
+      setRefresh(value => value + 1);
+    } catch (requestError) {
+      setError(requestError.message || 'Unable to restore archived order.');
+    } finally {
+      setRestoring(false);
     }
   };
 
@@ -110,7 +127,7 @@ export function ArchivedOrders({ user }) {
         <section><h4>Inventory Movements</h4><div className="bm-archive-table-wrap"><table className="bm-archive-table"><thead><tr>{['Material', 'Quantity', 'Type', 'Reason', 'Recorded'].map(label => <th key={label}>{label}</th>)}</tr></thead><tbody>
           {selected.movements?.map((movement, index) => <tr key={`${movement.material}-${index}`}><td>{movement.material}</td><td>{movement.quantity} {movement.unit}</td><td>{movement.movementType}</td><td>{movement.reason}</td><td>{date(movement.createdAt)}</td></tr>)}
         </tbody></table></div></section>
-        <section><h4>Archive</h4><p>Archived {date(selected.order.archivedAt)} by {selected.order.archivedByName || selected.order.archivedBy}</p></section>
+        <section><h4>Archive</h4><p>Archived {date(selected.order.archivedAt)} by {selected.order.archivedByName || selected.order.archivedBy}</p><Btn disabled={restoring} loading={restoring} onClick={restoreOrder}>Restore Order</Btn></section>
       </div>}
     </Modal>
   </section>;

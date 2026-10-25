@@ -16,3 +16,139 @@
 .bm-staff-shell .bm-profile-page{max-width:720px;margin:0;padding:0}.bm-staff-shell .bm-profile-page>div>div{background:var(--staff-surface)!important;border-color:var(--staff-border)!important}.bm-staff-shell .bm-profile-page h1,.bm-staff-shell .bm-profile-page h3,.bm-staff-shell .bm-profile-page div{color:var(--staff-text)}.bm-staff-shell .bm-profile-page label{color:var(--staff-secondary)!important}.bm-staff-shell .bm-profile-page input,.bm-staff-shell .bm-profile-page select,.bm-staff-shell .bm-profile-page textarea{min-height:42px;background:#10141b!important;border-color:#3b4350!important;color:var(--staff-text)!important}.bm-staff-shell .bm-profile-page button{min-height:42px}
 @media(max-width:760px){.bm-staff-topbar{gap:10px;min-height:64px;padding:8px 14px}.bm-staff-brand span,.bm-staff-account__name{display:none}.bm-staff-brand img{width:34px!important;height:34px!important}.bm-staff-nav{margin-right:auto}.bm-staff-nav button{padding:0 8px;font-size:11px}.bm-staff-content{padding:22px 14px 36px}.bm-staff-heading h1{font-size:22px}.bm-staff-account-trigger{gap:5px}.bm-staff-account-dropdown{width:174px}.bm-staff-shell .bm-modal-backdrop{padding:10px!important;align-items:flex-start!important}.bm-staff-shell .bm-modal-dialog{max-height:calc(100dvh - 20px)}.bm-staff-shell .bm-modal-header,.bm-staff-shell .bm-modal-body{padding:16px!important}}
 @media(max-width:430px){.bm-staff-topbar{gap:7px}.bm-staff-nav button{padding:0 5px;font-size:10px}.bm-staff-avatar{width:32px;height:32px}.bm-staff-account{gap:6px}.bm-staff-heading{margin-bottom:20px}.bm-staff-shell .bm-jobs-toolbar{align-items:center}.bm-staff-shell .bm-jobs-toolbar h2{font-size:17px}.bm-staff-shell .bm-jobs-refresh{min-height:36px;padding:7px 10px}}
+
+/* The production component's base stylesheet is shared with public contexts; theme it only in Staff. */
+.bm-staff-shell .bm-jobs-form,
+.bm-staff-shell .bm-material-picker,
+.bm-staff-shell .bm-material-usage,
+.bm-staff-shell .bm-additional-materials,
+.bm-staff-shell .bm-reassignment,
+.bm-staff-shell .bm-exceptions {
+  border-color: var(--staff-border);
+  background: var(--staff-surface);
+  color: var(--staff-secondary);
+}
+.bm-staff-shell .bm-jobs input,
+.bm-staff-shell .bm-jobs select,
+.bm-staff-shell .bm-jobs textarea,
+.bm-staff-shell .bm-staff-orders input,
+.bm-staff-shell .bm-staff-orders select,
+.bm-staff-shell .bm-staff-orders textarea,
+.bm-staff-shell .bm-staff-messages input,
+.bm-staff-shell .bm-staff-messages select,
+.bm-staff-shell .bm-staff-messages textarea {
+  min-width: 0;
+  border-color: #3b4350;
+  background: #10141b;
+  color: var(--staff-text);
+  color-scheme: dark;
+}
+.bm-staff-shell .bm-jobs option,
+.bm-staff-shell .bm-staff-orders option,
+.bm-staff-shell .bm-staff-messages option {
+  background: #10141b;
+  color: var(--staff-text);
+}
+.bm-staff-shell .bm-jobs button:not(.bm-modal-close),
+.bm-staff-shell .bm-staff-orders button:not(.bm-notifications__bell) {
+  border-color: #3b4350;
+  background: var(--staff-raised);
+  color: var(--staff-secondary);
+}
+.bm-staff-shell .bm-jobs button:hover:not(:disabled),
+.bm-staff-shell .bm-staff-orders button:hover:not(:disabled) {
+  border-color: #70404a;
+  background: #29171c;
+  color: #f4c1ca;
+}
+.bm-staff-shell .bm-jobs .bm-jobs-primary,
+.bm-staff-shell .bm-jobs .bm-jobs-primary:hover:not(:disabled) {
+  border-color: var(--staff-accent);
+  background: var(--staff-accent);
+  color: #fff;
+}
+.bm-staff-shell .bm-jobs [role=alert],
+.bm-staff-shell .bm-order-error {
+  border: 1px solid #6b3540;
+  border-radius: 7px;
+  background: #2b171c;
+  color: #ffbac4;
+}
+.bm-staff-shell .bm-job-details__active {
+  border-left: 3px solid #285b48;
+  background: #152b23;
+  color: #9be0b9;
+}
+.bm-staff-shell .bm-material-picker__selected {
+  border: 1px solid var(--staff-border);
+  border-radius: 6px;
+  background: var(--staff-raised);
+  color: var(--staff-secondary);
+}
+.bm-staff-shell .bm-exceptions__active {
+  border-left: 3px solid var(--staff-accent);
+  background: #2b171c;
+  color: #ffbac4;
+}
+.bm-staff-shell .bm-msg-unread-row,
+.bm-staff-shell .bm-staff-messages tbody tr,
+.bm-staff-shell .bm-staff-messages tbody tr:nth-child(even),
+.bm-staff-shell .bm-staff-messages tbody tr:nth-child(odd) {
+  background: var(--staff-surface);
+}
+.bm-staff-shell .bm-staff-messages tbody tr:hover {
+  background: #1a202a;
+}
+.bm-staff-shell .bm-msg-unread-row {
+  background: #2b171e;
+}
+.bm-staff-shell .bm-inquiry-pending {
+  border: 1px solid #725422;
+  background: #302510;
+  color: #f1c66d;
+}
+
+/* Neutralize the legacy inline ready/pickup panels while retaining their status meaning. */
+.bm-staff-shell [style*="background: rgb(243, 229, 245)"],
+.bm-staff-shell [style*="background: #f3e5f5"] {
+  border-color: #285b48 !important;
+  background: #152b23 !important;
+  color: #9be0b9 !important;
+}
+.bm-staff-shell [style*="background: rgb(243, 229, 245)"] > span,
+.bm-staff-shell [style*="background: #f3e5f5"] > span {
+  color: #9be0b9 !important;
+}
+.bm-staff-shell [style*="background: rgb(248, 249, 250)"],
+.bm-staff-shell [style*="background: #f8f9fa"] {
+  border-color: var(--staff-border) !important;
+  background: var(--staff-raised) !important;
+  color: var(--staff-secondary) !important;
+}
+.bm-staff-shell [style*="background: rgb(248, 249, 250)"] p,
+.bm-staff-shell [style*="background: #f8f9fa"] p {
+  color: var(--staff-muted) !important;
+}
+.bm-staff-shell [style*="border-bottom: 1px solid rgb(224, 224, 224)"],
+.bm-staff-shell [style*="border-bottom: 1px solid #e0e0e0"] {
+  border-bottom-color: var(--staff-border) !important;
+}
+.bm-staff-shell [style*="background: rgb(255, 243, 224)"],
+.bm-staff-shell [style*="background: #fff3e0"] {
+  border-color: #725422 !important;
+  background: #302510 !important;
+}
+.bm-staff-shell [style*="background: rgb(255, 243, 224)"] p,
+.bm-staff-shell [style*="background: #fff3e0"] p {
+  color: #f4d07c !important;
+}
+.bm-staff-shell .bm-staff-orders input[style],
+.bm-staff-shell .bm-staff-orders select[style],
+.bm-staff-shell .bm-staff-orders textarea[style],
+.bm-staff-shell .bm-jobs input[style],
+.bm-staff-shell .bm-jobs select[style],
+.bm-staff-shell .bm-jobs textarea[style] {
+  border-color: #3b4350 !important;
+  background: #10141b !important;
+  color: var(--staff-text) !important;
+}

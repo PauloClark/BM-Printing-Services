@@ -9,7 +9,6 @@ import os from 'node:os';
 const chrome = process.env.CHROME_PATH || 'C:/Program Files/Google/Chrome/Application/chrome.exe';
 const profile = await fs.mkdtemp(path.join(os.tmpdir(), 'bm-payment-browser-'));
 const server = await createServer({
-  define: { 'import.meta.env.VITE_TURNSTILE_SITE_KEY': JSON.stringify('1x00000000000000000000AA') },
   server: { host: '127.0.0.1', port: 0, open: false }
 });
 let browser, socket;
@@ -22,7 +21,6 @@ const mock = () => {
   const order = { id: 'ORD-SMOKE', orderId: 'ORD-SMOKE', customer: 'Test Customer', email: 'customer@example.test', phone: '09171234567', product: 'Polo Shirt', quantity: 12, total: 6000, payment: 'GCash', specs: 'Size: XL\nColor: Red', status: 'Pending', createdAt: new Date().toISOString(), items: [{ productName: 'Polo Shirt', quantity: 12, subtotal: 6000 }] };
   window.fetch = (input, options = {}) => {
     const url = typeof input === 'string' ? input : input.url;
-    if (url.includes('/api/turnstile/verify')) return json({ success: true });
     if (url.includes('/auth/v1/token')) {
       const role = JSON.parse(options.body).email.split('@')[0];
       user = { id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', email: `${role}@example.test`, aud: 'authenticated', role: 'authenticated', app_metadata: { role, provider: 'email', providers: ['email'] }, user_metadata: { full_name: `Test ${role}` } };
@@ -87,7 +85,7 @@ try {
   };
   const click = text => evaluate(`Array.from(document.querySelectorAll('button')).findLast(b => b.textContent.trim().toLowerCase() === ${JSON.stringify(text.toLowerCase())})?.click()`);
   await command('Page.enable'); await command('Runtime.enable');
-  await command('Page.addScriptToEvaluateOnNewDocument', { source: `window.turnstile = { render(_container, options) { queueMicrotask(() => options.callback('turnstile-test-token')); return 'test-widget'; }, reset() {}, remove() {} }; (${mock.toString()})()` });
+  await command('Page.addScriptToEvaluateOnNewDocument', { source: `(${mock.toString()})()` });
   await command('Emulation.setDeviceMetricsOverride', { width: 1365, height: 900, deviceScaleFactor: 1, mobile: false });
   await command('Page.navigate', { url: origin + '/#login' });
   await waitFor("Boolean(document.querySelector('input[type=password]'))", 'login form');

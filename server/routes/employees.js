@@ -1,17 +1,21 @@
 import mongoose from 'mongoose';
 import { AuditLog, Employee, Production } from '../db.js';
 import { requireAdmin } from '../middleware/auth.js';
-import { listAssignableStaff, verifyAssignableStaff } from '../staffDirectory.js';
+import { authorizeExistingStaffAccount, listAssignableStaff, listStaffAccountCandidates, verifyAssignableStaff } from '../staffDirectory.js';
 
 const clean = (value, max = 120) => typeof value === 'string' ? value.trim().slice(0, max) : '';
 const allowedPermissions = new Set(['view_assigned_jobs', 'update_job_progress']);
 const permissions = value => Array.isArray(value) ? [...new Set(value.filter(item => allowedPermissions.has(item)))] : ['view_assigned_jobs', 'update_job_progress'];
+const accountId = employee => employee.supabaseUserId || employee.linkedUserId || null;
+const findLinkedEmployees = () => Employee.find({ $or: [
+  { supabaseUserId: { $type: 'string', $ne: '' } }, { linkedUserId: { $type: 'string', $ne: '' } }
+] }).select('supabaseUserId linkedUserId name').lean();
 const view = (employee, jobs = {}) => ({
-  id: String(employee._id), name: employee.name, email: employee.email, phone: employee.phone,
-  position: employee.position, active: employee.active, supabaseUserId: employee.supabaseUserId || null,
-  linked: Boolean(employee.supabaseUserId), permissions: employee.permissions || [],
+  id: String(employee._id), name: employee.name, email: employee.email || employee.linkedEmail || '', phone: employee.phone || '',
+  position: employee.employeeRole || employee.position || 'Production Staff', active: employee.active !== false && !employee.archived,
+  supabaseUserId: accountId(employee), linked: Boolean(accountId(employee)), permissions: employee.permissions || ['view_assigned_jobs', 'update_job_progress'],
   mustChangePassword: Boolean(employee.mustChangePassword),
-  assignedJobs: jobs[String(employee.supabaseUserId)] || 0, createdAt: employee.createdAt, updatedAt: employee.updatedAt
+  assignedJobs: jobs[String(accountId(employee))] || 0, createdAt: employee.createdAt, updatedAt: employee.updatedAt
 });
 const restorationRoster = new Map([
   ['Bobby Abar Marces', 'Manager'], ['Concepcion Nisperos Marces', 'Secretary'],
@@ -65,11 +69,37 @@ export default function employeeRoutes(app) {
     try {
       const [accounts, linked] = await Promise.all([
         listAssignableStaff(),
-        Employee.find({ supabaseUserId: { $ne: null } }).select('supabaseUserId name').lean()
+        findLinkedEmployees()
       ]);
-      const owners = new Map(linked.map(item => [item.supabaseUserId, { employeeId: String(item._id), employeeName: item.name }]));
+      const owners = new Map(linked.map(item => [accountId(item), { employeeId: String(item._id), employeeName: item.name }]));
       res.json({ accounts: accounts.map(account => ({ ...account, linkedEmployee: owners.get(account.id) || null })) });
     } catch (error) { res.status(error.status || 503).json({ error: error.message || 'Unable to load staff accounts.' }); }
+  });
+  app.get('/api/employees/auth-account-candidates', requireAdmin, async (_req, res) => {
+    try {
+      const [accounts, linked] = await Promise.all([
+        listStaffAccountCandidates(),
+        findLinkedEmployees()
+      ]);
+      const owners = new Map(linked.map(item => [accountId(item), { employeeId: String(item._id), employeeName: item.name }]));
+      res.json({ accounts: accounts.map(account => ({ ...account, linkedEmployee: owners.get(account.id) || null })) });
+    } catch (error) { res.status(error.status || 503).json({ error: error.message || 'Unable to load existing account candidates.' }); }
+  });
+  app.post('/api/employees/auth-accounts/authorize', requireAdmin, async (req, res) => {
+    try {
+      const id = clean(req.body?.userId, 80), email = clean(req.body?.email, 254).toLowerCase();
+      const alreadyLinked = await Employee.findOne({ $or: [{ supabaseUserId: id }, { linkedUserId: id }] }).select('name').lean();
+      if (alreadyLinked) return res.status(409).json({ error: `This account is already linked to ${alreadyLinked.name}.` });
+      const account = await authorizeExistingStaffAccount({ id, email });
+      await AuditLog.create({ userId: req.user.id, userName: req.user.name || req.user.email || '', role: req.user.role,
+        action: 'STAFF_ACCOUNT_AUTHORIZED', module: 'Employees', resourceType: 'SupabaseUser', resourceId: account.id,
+        previousValue: { role: account.previousRole }, newValue: { role: 'staff', email: account.email }, timestamp: new Date() });
+      delete account.previousRole;
+      res.json({ account });
+    } catch (error) {
+      if (error?.code === 11000) return res.status(409).json({ error: 'This authentication account is already linked to an employee.' });
+      res.status(error.status || 503).json({ error: error.message || 'Unable to authorize this account as staff.' });
+    }
   });
 
   app.get('/api/employees', requireAdmin, async (_req, res) => {
@@ -101,6 +131,11 @@ export default function employeeRoutes(app) {
       if (!mongoose.isValidObjectId(req.params.id)) return res.status(400).json({ error: 'Invalid employee.' });
       const employee = await Employee.findById(req.params.id);
       if (!employee) return res.status(404).json({ error: 'Employee not found.' });
+      // Older employee documents may predate the required creator field. A
+      // successful authenticated admin edit is the first reliable audit actor.
+      if (!employee.createdBy) employee.createdBy = req.user.id;
+      if (!employee.email && employee.linkedEmail) employee.email = employee.linkedEmail;
+      if (employee.employeeRole) employee.position = employee.employeeRole;
       for (const field of ['name', 'phone', 'position']) if (req.body?.[field] !== undefined) employee[field] = clean(req.body[field], field === 'phone' ? 30 : 120);
       if (req.body?.email !== undefined) {
         const email = clean(req.body.email, 254).toLowerCase();
@@ -109,7 +144,14 @@ export default function employeeRoutes(app) {
       }
       if (req.body?.active !== undefined) employee.active = Boolean(req.body.active);
       if (req.body?.permissions !== undefined) employee.permissions = permissions(req.body.permissions);
-      if (req.body && Object.hasOwn(req.body, 'supabaseUserId')) employee.supabaseUserId = req.body.supabaseUserId ? (await verifyAssignableStaff(req.body.supabaseUserId)).id : null;
+      if (req.body && Object.hasOwn(req.body, 'supabaseUserId')) {
+        if (req.body.supabaseUserId) {
+          const selectedId = (await verifyAssignableStaff(req.body.supabaseUserId)).id;
+          const otherOwner = await Employee.findOne({ _id: { $ne: employee._id }, $or: [{ supabaseUserId: selectedId }, { linkedUserId: selectedId }] }).select('name').lean();
+          if (otherOwner) return res.status(409).json({ error: `This authentication account is already linked to ${otherOwner.name}.` });
+          employee.supabaseUserId = selectedId;
+        } else employee.supabaseUserId = null;
+      }
       if (req.body && Object.hasOwn(req.body, 'mustChangePassword')) {
         if (req.body.mustChangePassword && !employee.supabaseUserId) return res.status(400).json({ error: 'Link a staff authentication account before requiring a password change.' });
         employee.mustChangePassword = Boolean(req.body.mustChangePassword);

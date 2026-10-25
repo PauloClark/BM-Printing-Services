@@ -1,6 +1,6 @@
 import request from 'supertest';
 import express from 'express';
-import { setupTestDB, teardownTestDB, clearTestDB, seedTestAdmin, generateAdminToken } from './setup.js';
+import { setupTestDB, teardownTestDB, clearTestDB, seedTestAdmin, generateAdminToken, seedTestCustomer, generateCustomerToken } from './setup.js';
 import { Product } from '../server/db.js';
 import productRoutes from '../server/routes/products.js';
 import { previewCatalogMigration } from '../server/catalogMigration.js';
@@ -31,6 +31,23 @@ describe('authoritative product management', () => {
     expect(publicList.body.products.map(item => item.id)).toEqual([1]);
     const adminList = await request(app).get('/api/admin/products').set(auth()).expect(200);
     expect(adminList.body.products).toHaveLength(2);
+  });
+
+  it('restores configured specification types for legacy products saved as general', async () => {
+    await Product.create([
+      { ...baseProduct, id: 1, specificationType: 'general' },
+      { ...baseProduct, id: 2, specificationType: 'general' },
+      { ...baseProduct, id: 3, specificationType: 'general' },
+      { ...baseProduct, id: 4, specificationType: 'general' },
+      { ...baseProduct, id: 5, specificationType: 'general' },
+      { ...baseProduct, id: 9, specificationType: 'general' },
+      { ...baseProduct, id: 11, specificationType: 'general' }
+    ]);
+    const response = await request(app).get('/api/products').expect(200);
+    expect(response.body.products.map(product => [product.id, product.specificationType])).toEqual([
+      [1, 'clothing'], [2, 'clothing'], [3, 'hoodie'], [4, 'schoolId'],
+      [5, 'banner'], [9, 'mug'], [11, 'sticker']
+    ]);
   });
 
   it('persists a whole-peso price, options, image and availability edits', async () => {
@@ -69,6 +86,45 @@ describe('authoritative product management', () => {
     await Product.updateOne({ id: 1 }, { trackStock: true, stock: 2 });
     const response = await request(app).patch('/api/products/1/stock/increase').set(auth()).send({ amount: 2 }).expect(200);
     expect(response.body.product.stock).toBe(4);
+  });
+
+  it.each([[0, 'out-of-stock'], [3, 'low-stock'], [20, 'low-stock']])('honors the configured low-stock threshold for stock %i', async (stock, availability) => {
+    await Product.create({ ...baseProduct, trackStock: true, stock, lowStockThreshold: 99 });
+    const response = await request(app).get('/api/products').expect(200);
+    expect(response.body.products[0]).toMatchObject({ stock, lowStockThreshold: 99, availability });
+  });
+
+  it('persists stock edits across fresh admin and customer reads, including replenishment', async () => {
+    await Product.create(baseProduct);
+    for (const [stock, availability] of [[0, 'out-of-stock'], [3, 'low-stock'], [20, 'in-stock']]) {
+      await request(app).patch('/api/products/1').set(auth()).send({ trackStock: true, stock }).expect(200);
+      expect((await Product.findOne({ id: 1 }).lean()).stock).toBe(stock);
+      for (const url of ['/api/products', '/api/admin/products']) {
+        const result = await request(app).get(url).set(auth()).expect(200);
+        expect(result.body.products[0]).toMatchObject({ stock, availability, price: baseProduct.price, image: baseProduct.image });
+      }
+    }
+    await request(app).patch('/api/products/1').set(auth()).send({ trackStock: false }).expect(200);
+    expect((await request(app).get('/api/products')).body.products[0].availability).toBe('made-to-order');
+  });
+
+  it('rejects unauthorized stock edits and invalid quantities', async () => {
+    await Product.create({ ...baseProduct, trackStock: true, stock: 3 });
+    const customer = generateCustomerToken(await seedTestCustomer());
+    for (const url of ['/api/products/1', '/api/products/1/stock/increase']) {
+      await request(app).patch(url).send({ stock: 20 }).expect(401);
+      await request(app).patch(url).set('Authorization', 'Bearer ' + customer).send({ stock: 20 }).expect(403);
+    }
+    for (const stock of [-1, 1.5, 'invalid']) {
+      await request(app).patch('/api/products/1').set(auth()).send({ stock }).expect(400);
+    }
+    for (const amount of [-1, 0, 1.5]) {
+      await request(app).patch('/api/products/1/stock/increase').set(auth()).send({ amount }).expect(400);
+    }
+    await request(app).patch('/api/products/1/stock/decrease').set(auth()).send({ amount: 4 }).expect(409);
+    const results = await Promise.all(Array.from({ length: 5 }, () => request(app).patch('/api/products/1/stock/increase').set(auth()).send({ amount: 1 })));
+    expect(results.every(result => result.status === 200)).toBe(true);
+    expect((await Product.findOne({ id: 1 }).lean()).stock).toBe(8);
   });
 
   it('prevents duplicate migration records and flags conflicting existing values', async () => {

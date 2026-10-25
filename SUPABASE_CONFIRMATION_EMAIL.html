@@ -1,0 +1,26 @@
+<!-- Paste into Supabase Dashboard > Authentication > Email Templates > Confirm signup.
+     Replace {{ .SiteURL }}/bm-logo.png with a publicly hosted logo URL if needed. -->
+<div style="margin:0;padding:0;background:#f7f5f3;color:#30272a;font-family:Arial,Helvetica,sans-serif;">
+  <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background:#f7f5f3;padding:32px 12px;">
+    <tr><td align="center">
+      <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="max-width:560px;background:#ffffff;border:1px solid #eadfe1;border-radius:14px;overflow:hidden;">
+        <tr><td style="padding:28px 34px 20px;border-bottom:4px solid #8b1a1a;">
+          <div style="font-size:18px;font-weight:800;letter-spacing:.08em;color:#8b1a1a;">BM PRINTING</div>
+          <div style="margin-top:4px;font-size:10px;letter-spacing:.22em;color:#7d7477;">SERVICES</div>
+        </td></tr>
+        <tr><td style="padding:36px 34px 34px;">
+          <h1 style="margin:0 0 16px;color:#241c1e;font-size:28px;line-height:1.2;">Confirm Your Account</h1>
+          <p style="margin:0 0 14px;font-size:16px;line-height:1.6;">Hello,</p>
+          <p style="margin:0 0 24px;color:#62595c;font-size:15px;line-height:1.7;">Thank you for creating your BM Printing Services account. Please confirm your email address to finish setting up your account.</p>
+          <table role="presentation" cellspacing="0" cellpadding="0"><tr><td style="border-radius:8px;background:#8b1a1a;">
+            <a href="{{ .ConfirmationURL }}" style="display:inline-block;padding:13px 24px;color:#ffffff;text-decoration:none;font-size:14px;font-weight:700;">Confirm Account</a>
+          </td></tr></table>
+          <p style="margin:28px 0 8px;color:#756c6f;font-size:12px;line-height:1.6;">If the button does not work, copy and paste this secure confirmation link into your browser:</p>
+          <p style="margin:0;word-break:break-all;font-size:12px;line-height:1.6;"><a href="{{ .ConfirmationURL }}" style="color:#8b1a1a;">{{ .ConfirmationURL }}</a></p>
+          <p style="margin:28px 0 0;color:#8a8183;font-size:12px;line-height:1.6;">If you did not create this account, you can safely ignore this email.</p>
+        </td></tr>
+        <tr><td style="padding:18px 34px;background:#fbf9f8;color:#8a8183;font-size:11px;line-height:1.5;">BM Printing Services · Made for your ideas. Printed with care.</td></tr>
+      </table>
+    </td></tr>
+  </table>
+</div>

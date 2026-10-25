@@ -2,62 +2,32 @@ import { signInAccount } from '../../utils/authActions';
 import React, { useState } from 'react';
 import { store } from '../../utils/storage';
 import { GoogleAuthOption } from '../Common/GoogleAuthOption';
-import { PhoneOtpPanel } from '../Common/PhoneOtpPanel';
-import { TurnstileWidget } from '../Common/TurnstileWidget';
-import { turnstileStatusMessage, verifyTurnstileToken } from '../../utils/turnstile';
 import './AuthPages.css';
 import { publicAsset } from '../../utils/assets';
 import { BMLogo } from '../Common/BMLogo';
+import { TurnstileWidget } from '../Common/TurnstileWidget';
+import { requireTurnstileToken } from '../../utils/turnstile';
 
 export const LoginPage = ({ setPage, onLogin, showToast }) => {
-  const [method, setMethod] = useState('email');
   const [email, setEmail] = useState('');
   const [pass, setPass] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
   const [loading, setLoading] = useState(false);
   const [googleLoading, setGoogleLoading] = useState(false);
-  const [turnstileToken, setTurnstileToken] = useState('');
-  const [turnstileStatus, setTurnstileStatus] = useState('loading');
-  const [turnstileResetSignal, setTurnstileResetSignal] = useState(0);
-
-  const verifySecurity = async () => {
-    if (!turnstileToken) throw new Error(turnstileStatusMessage(turnstileStatus));
-    try {
-      await verifyTurnstileToken(turnstileToken);
-    } finally {
-      setTurnstileToken('');
-      setTurnstileResetSignal(signal => signal + 1);
-    }
-  };
-
+  const [captchaToken, setCaptchaToken] = useState('');
+  const [captchaStatus, setCaptchaStatus] = useState('loading');
+  const [captchaReset, setCaptchaReset] = useState(0);
   const login = async () => {
     setErrorMessage('');
+    let token;
+    try { token = requireTurnstileToken(captchaToken, captchaStatus); }
+    catch (error) { setErrorMessage(error.message); showToast?.(error.message, 'error'); return; }
     setLoading(true);
     try {
-      await verifySecurity();
       const { supabase } = await import('../../utils/supabaseClient');
-      const user = await signInAccount(supabase, email, pass, async () => {
-        const response = await fetch('/api/auth/login', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ email, password: pass })
-        });
-
-        const data = await response.json().catch(() => ({}));
-
-        if (!response.ok) {
-          throw new Error(data.error || 'Invalid email or password.');
-        }
-
-        if (!data.user) {
-          throw new Error(data.error || 'Invalid email or password.');
-        }
-
-        return { ...data.user, token: data.token, authProvider: 'jwt' };
-      });
-      if (user.authProvider === 'supabase') await store.del('session');
-      else await store.set('session', user);
+      const user = await signInAccount(supabase, email, pass, token);
+      await store.del('session');
       onLogin?.(user);
       showToast?.('Logged in successfully.', 'success');
     } catch (error) {
@@ -66,6 +36,8 @@ export const LoginPage = ({ setPage, onLogin, showToast }) => {
       setErrorMessage(message);
       showToast?.(message, 'error');
     } finally {
+      setCaptchaToken('');
+      setCaptchaReset(value => value + 1);
       setLoading(false);
     }
   };
@@ -88,41 +60,7 @@ export const LoginPage = ({ setPage, onLogin, showToast }) => {
           <p>Log in to your BM Printing Services account</p>
         </header>
 
-        <div className="bm-auth-tabs" role="tablist" aria-label="Sign-in method">
-          <button
-            type="button"
-            role="tab"
-            id="bm-login-tab-email"
-            aria-selected={method === 'email'}
-            aria-controls="bm-login-panel"
-            className={`bm-auth-tab${method === 'email' ? ' is-active' : ''}`}
-            onClick={() => setMethod('email')}
-          >
-            Email
-          </button>
-          <button
-            type="button"
-            role="tab"
-            id="bm-login-tab-phone"
-            aria-selected={method === 'phone'}
-            aria-controls="bm-login-panel"
-            className={`bm-auth-tab${method === 'phone' ? ' is-active' : ''}`}
-            onClick={() => setMethod('phone')}
-          >
-            Phone
-          </button>
-        </div>
-
-        <div id="bm-login-panel" role="tabpanel" aria-labelledby={`bm-login-tab-${method}`}>
-        {method === 'phone' ? (
-          <PhoneOtpPanel
-            showToast={showToast}
-            onAuthenticated={user => {
-              onLogin?.(user);
-            }}
-          />
-        ) : (
-        <>
+        <div id="bm-login-panel">
         <div className="bm-auth-fields">
           <div className="bm-auth-field">
             <label htmlFor="bm-login-email">Email Address</label>
@@ -167,12 +105,7 @@ export const LoginPage = ({ setPage, onLogin, showToast }) => {
           </div>
         </div>
 
-        <TurnstileWidget
-          resetSignal={turnstileResetSignal}
-          onTokenChange={setTurnstileToken}
-          onStatusChange={setTurnstileStatus}
-        />
-
+        <TurnstileWidget resetSignal={captchaReset} onTokenChange={setCaptchaToken} onStatusChange={setCaptchaStatus} />
         {errorMessage && <p className="bm-auth-error" role="alert">{errorMessage}</p>}
 
         <button
@@ -187,13 +120,10 @@ export const LoginPage = ({ setPage, onLogin, showToast }) => {
           {!loading && <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true"><path d="M4 12h15M13 5l7 7-7 7" /></svg>}
         </button>
 
-        </>
-        )}
         </div>
 
         <GoogleAuthOption
           disabled={loading}
-          verifySecurity={verifySecurity}
           onLoadingChange={setGoogleLoading}
           onError={error => showToast?.(error.message || 'Unable to connect with Google. Please try again.', 'error')}
         />

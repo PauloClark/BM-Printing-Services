@@ -1,7 +1,7 @@
 import { store } from './storage';
 
 const apiBase = String(import.meta.env.VITE_API_BASE_URL || '').replace(/\/$/, '');
-const apiUrl = url => /^https?:\/\//i.test(url) ? url : `${apiBase}${url.startsWith('/') ? url : `/${url}`}`;
+export const apiUrl = url => /^https?:\/\//i.test(url) ? url : `${apiBase}${url.startsWith('/') ? url : `/${url}`}`;
 
 async function getAuthToken(user) {
   let token = user?.token || '';

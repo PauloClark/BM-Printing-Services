@@ -176,7 +176,7 @@ export const Navbar = ({ page, setPage, user, onLogout }) => {
           aria-controls="bm-navigation-links"
           onClick={() => setMenuOpen(open => !open)}
         >
-          <span aria-hidden="true">{menuOpen ? "✕" : "☰"}</span>
+          <span aria-hidden="true">{menuOpen ? "Close" : "Menu"}</span>
         </button>
         <div id="bm-navigation-links" className={`bm-navbar-links${menuOpen ? " is-open" : ""}`}>
           {!isStaff && links.map(l => (

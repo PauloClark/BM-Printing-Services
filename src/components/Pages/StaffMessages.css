@@ -72,5 +72,89 @@
 .bm-staff-shell .bm-staff-messages .bm-order-table{border:0;border-radius:0}
 .bm-staff-shell .bm-msg-unread-row{background:#25171d}.bm-staff-shell .bm-msg-preview{color:#c2cad5}.bm-staff-shell .bm-msg-full{border-color:var(--staff-border);background:#11161e;color:var(--staff-secondary)}
 .bm-staff-shell .bm-msg-badge--guest{background:#29313c;color:#d5dce6}.bm-staff-shell .bm-msg-badge--customer{background:#172b3c;color:#9ed0f2}.bm-staff-shell .bm-msg-badge--read{background:#332817;color:#f0c679}.bm-staff-shell .bm-msg-badge--resolved{background:#152b23;color:#73d4aa}
+.bm-staff-shell .bm-staff-messages tbody tr,.bm-staff-shell .bm-staff-messages tbody tr:nth-child(even),.bm-staff-shell .bm-staff-messages tbody tr:nth-child(odd){background:var(--staff-surface)}
+.bm-staff-shell .bm-staff-messages tbody tr:hover{background:#1a202a}
+.bm-staff-shell .bm-staff-messages .bm-msg-unread-row{background:#2b171e}
+.bm-staff-shell .bm-staff-messages .bm-msg-preview{color:var(--staff-muted)}
 @media(max-width:900px){.bm-staff-shell .bm-staff-messages .bm-order-toolbar{grid-template-columns:1fr 140px auto}.bm-staff-shell .bm-staff-messages .bm-order-toolbar h2{grid-column:1/-1}}
 @media(max-width:560px){.bm-staff-shell .bm-staff-messages .bm-order-toolbar{grid-template-columns:minmax(0,1fr) 105px}.bm-staff-shell .bm-staff-messages .bm-order-toolbar h2{grid-column:1/-1}.bm-staff-shell .bm-staff-messages .bm-order-toolbar button{grid-column:1/-1;width:100%}}
+
+/* Admin workspace dark theme. The base rules above remain for the public/light
+   contexts; these scoped selectors prevent pale inquiry rows and modal text. */
+.bm-admin-shell .bm-staff-messages {
+  border-top-color: var(--a-border);
+  color: var(--a-text);
+}
+.bm-admin-shell .bm-staff-messages .bm-order-toolbar h2,
+.bm-admin-shell .bm-staff-messages .bm-order-toolbar > p,
+.bm-admin-shell .bm-staff-messages table td,
+.bm-admin-shell .bm-staff-messages .bm-msg-preview {
+  color: var(--a-secondary) !important;
+}
+.bm-admin-shell .bm-staff-messages .bm-order-toolbar h2 {
+  color: var(--a-text) !important;
+}
+.bm-admin-shell .bm-staff-messages tbody tr,
+.bm-admin-shell .bm-staff-messages tbody tr:nth-child(even),
+.bm-admin-shell .bm-staff-messages tbody tr:nth-child(odd) {
+  background: var(--a-surface) !important;
+}
+.bm-admin-shell .bm-staff-messages tbody tr:hover {
+  background: #1a202a !important;
+}
+.bm-admin-shell .bm-staff-messages .bm-msg-unread-row {
+  background: #2b171e !important;
+}
+.bm-admin-shell .bm-staff-messages .bm-msg-unread-row td:first-child {
+  border-left-color: var(--a-accent) !important;
+  color: var(--a-text) !important;
+}
+.bm-admin-shell .bm-staff-messages .bm-msg-preview {
+  color: var(--a-muted) !important;
+}
+.bm-admin-shell .bm-staff-messages .bm-order-table {
+  border-color: var(--a-border) !important;
+}
+.bm-admin-shell .bm-staff-messages .bm-order-details {
+  border-color: var(--a-border);
+  background: var(--a-raised);
+}
+.bm-admin-shell .bm-staff-messages .bm-order-details dt {
+  color: var(--a-muted) !important;
+}
+.bm-admin-shell .bm-staff-messages .bm-order-details dd {
+  color: var(--a-text) !important;
+  overflow-wrap: anywhere;
+}
+.bm-admin-shell .bm-staff-messages h4 {
+  color: var(--a-text);
+}
+.bm-admin-shell .bm-staff-messages .bm-msg-full {
+  border-color: var(--a-border);
+  background: #11161e;
+  color: var(--a-text);
+}
+.bm-admin-shell .bm-staff-messages .bm-msg-badge--new {
+  background: #7f1d2d;
+  color: #fff;
+}
+.bm-admin-shell .bm-staff-messages .bm-msg-badge--read {
+  background: #263750;
+  color: #b9d3f5;
+}
+.bm-admin-shell .bm-staff-messages .bm-msg-badge--resolved {
+  background: #153525;
+  color: #8fddb5;
+}
+.bm-admin-shell .bm-staff-messages .bm-order-toolbar {
+  color: var(--a-secondary);
+}
+@media (max-width: 560px) {
+  .bm-admin-shell .bm-staff-messages .bm-order-toolbar {
+    grid-template-columns: minmax(0, 1fr) 105px;
+  }
+}
+
+.bm-inquiry-thread{display:grid;gap:9px;margin:10px 0 18px}.bm-inquiry-entry{padding:12px 14px;border:1px solid #e5cdd2;border-radius:8px;background:#fff}.bm-inquiry-entry header{display:flex;align-items:center;flex-wrap:wrap;gap:8px;color:#51494b;font-size:12px}.bm-inquiry-entry header span{padding:2px 7px;border-radius:12px;background:#f3e9eb;color:#8b1a1a;font-size:10px;font-weight:700}.bm-inquiry-entry time{margin-left:auto;color:#827b7d;font-size:11px}.bm-inquiry-entry p{margin:8px 0 0;color:#24292e;font-size:13px;line-height:1.5;white-space:pre-wrap;overflow-wrap:anywhere}.bm-inquiry-entry--internal{background:#fff8e8;border-color:#ead8ac}.bm-inquiry-empty{margin:0;color:#827b7d;font-size:13px}.bm-inquiry-label{display:grid;gap:8px;margin:12px 0;color:#312b2d;font-size:12px;font-weight:700}.bm-inquiry-label span{display:block;color:#8a5b00;font-size:11px;font-weight:500}.bm-inquiry-label textarea{width:100%;resize:vertical;min-height:80px;padding:10px;border:1px solid #d9cdd0;border-radius:8px;font:inherit;line-height:1.5}.bm-inquiry-pending{padding:10px 12px;border-radius:8px;background:#fff4dc;color:#805500;font-size:12px}
+.bm-staff-shell .bm-inquiry-entry{border-color:var(--staff-border);background:#151b24}.bm-staff-shell .bm-inquiry-entry header,.bm-staff-shell .bm-inquiry-entry p{color:var(--staff-secondary)}.bm-staff-shell .bm-inquiry-entry--internal{background:#292516}.bm-staff-shell .bm-inquiry-label{color:var(--staff-text)}.bm-staff-shell .bm-inquiry-label textarea{border-color:var(--staff-border);background:#10141b;color:var(--staff-text)}
+.bm-admin-shell .bm-inquiry-entry{border-color:var(--a-border);background:#151b24}.bm-admin-shell .bm-inquiry-entry header,.bm-admin-shell .bm-inquiry-entry p{color:var(--a-secondary)}.bm-admin-shell .bm-inquiry-entry--internal{background:#292516}.bm-admin-shell .bm-inquiry-label{color:var(--a-text)}.bm-admin-shell .bm-inquiry-label textarea{border-color:var(--a-border);background:#10141b;color:var(--a-text)}

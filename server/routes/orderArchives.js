@@ -1,6 +1,7 @@
 import mongoose from 'mongoose';
 import ExcelJS from 'exceljs';
-import { Order, Production, StockMovement } from '../db.js';
+import { AuditLog, Order, Production, StockMovement } from '../db.js';
+import { isFulfilledOrderStatus } from '../../shared/orderWorkflow.js';
 import { requireAdmin } from '../middleware/auth.js';
 import { safeText, serializeOrder } from '../utils.js';
 
@@ -10,7 +11,10 @@ const wrap = handler => async (req, res) => {
   catch (error) {
     if (error.status) return res.status(error.status).json({ error: error.message });
     if (error.code === 11000) return res.status(409).json({ error: 'This order is already archived.' });
-    if (error.code === 20 || error.codeName === 'IllegalOperation') return res.status(503).json({ error: 'Archiving requires MongoDB transactions. No archive changes were committed.' });
+    if (error.code === 20 || error.codeName === 'IllegalOperation') {
+      const operation = req.path.endsWith('/restore') ? 'restore' : 'archive';
+      return res.status(503).json({ error: `${operation[0].toUpperCase()}${operation.slice(1)} requires MongoDB transactions. No changes were committed.` });
+    }
     console.error('Archive/report request failed:', error);
     return res.status(503).json({ error: 'Unable to complete this archive/report request.' });
   }
@@ -94,13 +98,13 @@ const paymentHistory = order => (order.paymentSubmissions || []).map(payment => 
 async function completedRows(range) {
   const jobs = await Production.find({
     phase3: true,
-    status: 'Ready for Pickup',
+    status: { $in: ['Ready for Pickup', 'Completed'] },
     productionCompletedAt: { $gte: range.start, $lte: range.end }
   }).sort({ productionCompletedAt: 1, orderId: 1 }).lean();
   if (!jobs.length) return [];
   const orderIds = [...new Set(jobs.map(job => job.orderId))];
   const [orders, movements] = await Promise.all([
-    Order.find({ orderId: { $in: orderIds }, status: 'Picked Up', paymentStatus: 'Verified' }).lean(),
+    Order.find({ orderId: { $in: orderIds }, status: { $in: ['Picked Up', 'Completed'] }, paymentStatus: 'Verified' }).lean(),
     StockMovement.find({ orderId: { $in: orderIds }, movementType: 'OUT', reason: 'ORDER_PICKUP' }).lean()
   ]);
   const ordersById = new Map(orders.map(order => [order.orderId, order]));
@@ -114,7 +118,9 @@ async function completedRows(range) {
   const included = new Set();
   for (const job of jobs) {
     const order = ordersById.get(job.orderId);
-    if (!order || included.has(order.orderId) || !order.pickedUpAt || !order.releasedBy) continue;
+    const fulfilledAt = order?.pickedUpAt || order?.completedAt;
+    if (!order || included.has(order.orderId) || !isFulfilledOrderStatus(order.status) || !fulfilledAt) continue;
+    if (order.status === 'Picked Up' && !order.releasedBy) continue;
     if (!hasFinalizedInventory(job, movementsById.get(order.orderId) || [])) continue;
     const payment = order.paymentSubmissions?.[order.paymentSubmissions.length - 1];
     if (payment?.status !== 'Verified' || !payment.verifiedAt) continue;
@@ -132,7 +138,7 @@ async function completedRows(range) {
       productionStartedAt: job.productionStartedAt || null,
       productionCompletedAt: job.productionCompletedAt,
       readyForPickupAt: job.readyForPickupAt,
-      pickedUpAt: order.pickedUpAt,
+      pickedUpAt: order.pickedUpAt || null,
       archived: Boolean(order.archived)
     });
   }
@@ -228,12 +234,38 @@ export default function orderArchiveRoutes(app) {
         if (!order) fail(404, 'Order not found.');
         const { job } = await assertArchiveEligible(order, session);
         const archivedAt = new Date();
+        const archivedByName = req.user.name || req.user.email || '';
         archivedOrder = await Order.findOneAndUpdate(
           { _id: order._id, status: 'Picked Up', paymentStatus: 'Verified', archived: { $ne: true }, jobOrderId: job.jobOrderId },
-          { $set: { archived: true, archivedAt, archivedBy: req.user.id, archivedByName: req.user.name || req.user.email || '' } },
+          { $set: { archived: true, archivedAt, archivedBy: req.user.id, archivedByName } },
           { new: true, runValidators: true, session }
         );
         if (!archivedOrder) fail(409, 'Order changed while archiving. Refresh and try again.');
+        await AuditLog.create([{
+          userId: req.user.id,
+          userName: archivedByName,
+          role: req.user.role,
+          action: 'ARCHIVE_ORDER',
+          module: 'Orders',
+          resourceType: 'Order',
+          resourceId: orderId,
+          previousValue: {
+            archived: Boolean(order.archived),
+            status: order.status,
+            archivedAt: order.archivedAt || null,
+            archivedBy: order.archivedBy || '',
+            archivedByName: order.archivedByName || ''
+          },
+          newValue: {
+            archived: true,
+            status: archivedOrder.status,
+            archivedAt,
+            archivedBy: req.user.id,
+            archivedByName
+          },
+          metadata: { orderId, jobOrderId: job.jobOrderId },
+          timestamp: archivedAt
+        }], { session });
       }, { readConcern: { level: 'snapshot' }, writeConcern: { w: 'majority' } });
     } finally {
       await session.endSession();
@@ -241,9 +273,42 @@ export default function orderArchiveRoutes(app) {
     return res.json({ success: true, order: orderWithArchive(archivedOrder) });
   }));
 
+  app.post('/api/admin/orders/:orderId/restore', requireAdmin, wrap(async (req, res) => {
+    const orderId = safeText(req.params.orderId).trim().toUpperCase();
+    const session = await mongoose.startSession();
+    let restoredOrder;
+    try {
+      await session.withTransaction(async () => {
+        const order = await Order.findOne({ orderId, archived: true }).session(session);
+        if (!order) fail(404, 'Archived order not found.');
+        restoredOrder = await Order.findOneAndUpdate(
+          { _id: order._id, archived: true },
+          { $set: { archived: false }, $unset: { archivedAt: 1, archivedBy: 1, archivedByName: 1 } },
+          { new: true, runValidators: true, session }
+        );
+        if (!restoredOrder) fail(409, 'This order changed while restoring. Refresh and try again.');
+        await AuditLog.create([{
+          userId: req.user.id,
+          userName: req.user.name || req.user.email || '',
+          role: req.user.role,
+          action: 'RESTORE_ORDER',
+          module: 'Orders',
+          resourceType: 'Order',
+          resourceId: orderId,
+          previousValue: { archived: true, status: order.status },
+          newValue: { archived: false, status: restoredOrder.status },
+          timestamp: new Date()
+        }], { session });
+      }, { readConcern: { level: 'snapshot' }, writeConcern: { w: 'majority' } });
+    } finally {
+      await session.endSession();
+    }
+    return res.json({ success: true, order: orderWithArchive(restoredOrder) });
+  }));
+
   app.get('/api/admin/archived-orders', requireAdmin, wrap(async (req, res) => {
     const range = dateRange(req.query, false);
-    const jobs = await Production.find({ phase3: true, status: 'Ready for Pickup', ...(range ? { productionCompletedAt: { $gte: range.start, $lte: range.end } } : {}) })
+    const jobs = await Production.find({ phase3: true, status: { $in: ['Ready for Pickup', 'Completed'] }, ...(range ? { productionCompletedAt: { $gte: range.start, $lte: range.end } } : {}) })
       .sort({ productionCompletedAt: -1 }).lean();
     if (!jobs.length) return res.json({ orders: [] });
     const ids = [...new Set(jobs.map(job => job.orderId))];

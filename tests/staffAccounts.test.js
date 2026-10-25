@@ -4,8 +4,8 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { setupTestDB, teardownTestDB, clearTestDB, seedTestAdmin } from './setup.js';
-import { Order, OrderFile, User } from '../server/db.js';
-import { generateToken, requireAdmin } from '../server/middleware/auth.js';
+import { Employee, Order, OrderFile, Production, User } from '../server/db.js';
+import { generateToken, requireAdmin, requireOrderStaff } from '../server/middleware/auth.js';
 import authRoutes from '../server/routes/auth.js';
 import orderFileRoutes from '../server/routes/orderFiles.js';
 import { saveDesignFile } from '../server/designFiles.js';
@@ -36,6 +36,7 @@ beforeAll(async () => {
   authRoutes(app, (req, res, next) => next());
   orderFileRoutes(app, directory);
   app.get('/test/admin', requireAdmin, (req, res) => res.json({ ok: true }));
+  app.get('/test/staff', requireOrderStaff, (req, res) => res.json({ ok: true }));
 });
 afterAll(async () => {
   global.fetch = originalFetch;
@@ -55,6 +56,8 @@ beforeEach(async () => {
     customerEmail: 'a@example.com', totalAmount: 500,
     items: [{ productId: 1, productName: 'Shirt', quantity: 1, unitPrice: 500, subtotal: 500 }],
     designFileName: 'design-test.png', designOriginalName: 'Reference.png', designFileType: 'image/png' });
+  await Production.create({ phase3: true, jobOrderId: 'JO-FILE', orderId: 'ORD-FILE',
+    assignedEmployee: users.staff.id, assignedEmployeeName: 'Staff', assignedBy: 'admin-a', status: 'Assigned' });
 });
 
 it('returns current trusted roles and denies staff access to admin operations', async () => {
@@ -71,6 +74,12 @@ it('uses the latest Auth role, so revocation is effective without trusting old b
   expect((await request(app).get('/api/auth/me').set('Authorization', 'Bearer staff')).body.user.role).toBe('staff');
   users.staff.app_metadata.role = 'customer';
   expect((await request(app).get('/api/auth/me').set('Authorization', 'Bearer staff')).body.user.role).toBe('customer');
+});
+it('authorizes an existing Supabase staff identity from its legacy linkedUserId field', async () => {
+  await Employee.collection.insertOne({ name: 'Legacy Staff', employeeRole: 'Manager', linkedEmail: 'staff@example.com',
+    linkedUserId: users.staff.id, active: true, archived: false, mustChangePassword: false });
+  const response = await request(app).get('/test/staff').set('Authorization', 'Bearer staff');
+  expect(response.status).toBe(200);
 });
 it('does not use legacy tokens for staff and can disable legacy authentication entirely', async () => {
   const staff = await User.create({ id: 'legacy-staff', name: 'Legacy Staff', email: 'legacy-staff@example.com', role: 'staff' });
@@ -96,16 +105,17 @@ it('routes roles separately and rejects dashboard access for forged or unknown r
 });
 it('public Supabase registration whitelists profile data and never sends a requested role', async () => {
   const client = { auth: { signUp: jest.fn().mockResolvedValue({ data: { session: null }, error: null }) } };
-  const data = await registerCustomer(client, { email: ' a@example.com ', password: 'secret123', name: 'Customer', phone: '09171234567', role: 'admin', app_metadata: { role: 'staff' } }, 'https://bm.test');
+  const data = await registerCustomer(client, { email: ' a@example.com ', password: 'secret123', name: 'Customer', phone: '09171234567', role: 'admin', app_metadata: { role: 'staff' } }, 'https://bm.test', 'captcha-signup');
   expect(data.session).toBeNull();
   expect(client.auth.signUp).toHaveBeenCalledWith({ email: 'a@example.com', password: 'secret123', options: {
-    emailRedirectTo: 'https://bm.test', data: { full_name: 'Customer', phone: '09171234567' }
+    emailRedirectTo: 'https://bm.test', captchaToken: 'captcha-signup', data: { full_name: 'Customer', phone: '09171234567' }
   } });
 });
 it('uses Supabase password login for staff and never falls back for provider failures', async () => {
   const legacy = jest.fn();
   const client = { auth: { signInWithPassword: jest.fn().mockResolvedValue({ data: { user: users.staff }, error: null }) } };
-  expect((await signInAccount(client, 'staff@example.com', 'password', legacy)).role).toBe('staff');
+  expect((await signInAccount(client, 'staff@example.com', 'password', 'captcha-login')).role).toBe('staff');
+  expect(client.auth.signInWithPassword).toHaveBeenCalledWith({ email: 'staff@example.com', password: 'password', options: { captchaToken: 'captcha-login' } });
   expect(legacy).not.toHaveBeenCalled();
   for (const code of ['email_not_confirmed', 'over_request_rate_limit', 'mfa_verification_required', 'unexpected_failure']) {
     client.auth.signInWithPassword.mockResolvedValue({ data: {}, error: { code } });
@@ -113,22 +123,20 @@ it('uses Supabase password login for staff and never falls back for provider fai
   }
   expect(legacy).not.toHaveBeenCalled();
 });
-it('retains existing legacy sign-in only as a compatibility fallback', async () => {
+it('never falls back to legacy MongoDB credentials after Supabase rejects sign-in', async () => {
   const legacy = jest.fn().mockResolvedValue({ id: 'legacy', role: 'customer', authProvider: 'jwt' });
   const client = { auth: { signInWithPassword: jest.fn().mockResolvedValue({ data: {}, error: { code: 'invalid_credentials' } }) } };
-  expect((await signInAccount(client, 'old@example.com', 'password', legacy)).id).toBe('legacy');
-  expect(legacy).toHaveBeenCalledTimes(1);
+  await expect(signInAccount(client, 'old@example.com', 'password', legacy)).rejects.toEqual({ code: 'invalid_credentials' });
+  expect(legacy).not.toHaveBeenCalled();
 });
-it('legacy registration cannot assign a privileged role and profile updates cannot escalate it', async () => {
+it('keeps registration on Supabase and disables the legacy MongoDB registration endpoint', async () => {
   const registered = await request(app).post('/api/auth/register').send({ name: 'New Customer', email: 'new@example.com', password: 'secret123', role: 'admin' });
-  expect(registered.status).toBe(200); expect(registered.body.user.role).toBe('customer');
-  const auth = `Bearer ${registered.body.token}`;
-  expect((await request(app).patch('/api/auth/profile').set('Authorization', auth).send({ name: 'New Name', role: 'staff' })).status).toBe(400);
-  const updated = await request(app).patch('/api/auth/profile').set('Authorization', auth).send({ name: 'New Name', phone: '09171234567', address: 'Davao' });
-  expect(updated.status).toBe(200); expect(updated.body.user.role).toBe('customer');
-  expect((await User.findOne({ email: 'new@example.com' })).name).toBe('New Name');
+  expect(registered.status).toBe(410);
+  expect(await User.findOne({ email: 'new@example.com' })).toBeNull();
 });
 it('staff and the owner can read design files; another customer or an anonymous caller cannot', async () => {
+  await Employee.create({ name: 'Staff', email: 'staff@example.com', position: 'Production Staff', active: true,
+    supabaseUserId: users.staff.id, permissions: ['view_assigned_jobs'], createdBy: 'admin-a' });
   for (const token of ['customer', 'staff', 'admin', 'other', 'forged', '']) {
     const headers = token ? { Authorization: `Bearer ${token}` } : {};
     const permitted = ['customer', 'staff', 'admin'].includes(token);
@@ -143,6 +151,8 @@ it('staff and the owner can read design files; another customer or an anonymous 
   }
 });
 it('guards legacy file URLs and cannot read another order file by changing its ID', async () => {
+  await Employee.create({ name: 'Staff', email: 'staff@example.com', position: 'Production Staff', active: true,
+    supabaseUserId: users.staff.id, permissions: ['view_assigned_jobs'], createdBy: 'admin-a' });
   const file = await OrderFile.create({ orderId: 'ORD-OTHER', filename: 'design-test.png', originalName: 'Other.png', fileType: 'PNG', storagePath: '/uploads/orders/design-test.png' });
   expect((await request(app).get(`/api/orders/ORD-FILE/files/${file._id}`).set('Authorization', 'Bearer customer')).status).toBe(404);
   expect((await request(app).get('/uploads/orders/design-test.png').set('Authorization', 'Bearer other')).status).toBe(404);

@@ -436,3 +436,272 @@
 .order-step3__test { display: inline-block; width: fit-content; padding: 5px 10px; border-radius: 5px; font-size: 12px; background: #fff4dc; color: #785316; }
 @media (max-width: 1100px) { .order-step3__grid { grid-template-columns: minmax(0, 1fr); } }
 @media (max-width: 420px) { .order-step3__summary, .order-step3__prices { padding: 14px; } .order-step3__actions > button { flex: 1; } }
+
+/* Saved-order confirmation */
+.bm-order-success-page { max-width: 1120px; margin: 0 auto; }
+.bm-order-success-banner { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 20px; padding: 28px 30px; margin-bottom: 24px; background: #f1f8f2; border: 1px solid #d3e8d7; border-radius: 16px; }
+.bm-order-success-check { display: grid; place-items: center; width: 60px; height: 60px; color: #fff; background: #2e8b57; border-radius: 50%; }
+.bm-order-success-check svg { width: 30px; height: 30px; stroke-width: 2.4; }
+.bm-order-success-copy h1 { margin: 2px 0 7px; color: #263229; font-size: clamp(24px, 3vw, 32px); }
+.bm-order-success-copy > p:last-child { margin: 0; color: #58705e; font-size: 14px; }
+.bm-order-success-id { min-width: 190px; padding-left: 24px; border-left: 1px solid #cfe0d1; text-align: right; }
+.bm-order-success-id span, .bm-order-success-id strong { display: block; }
+.bm-order-success-id span { color: #58705e; font-size: 11px; text-transform: uppercase; letter-spacing: .08em; }
+.bm-order-success-id strong { margin: 5px 0 9px; color: #7c1717; font-size: 18px; overflow-wrap: anywhere; }
+.bm-order-success-id button, .bm-payment-account button { border: 0; padding: 0; color: #7c1717; background: none; font: inherit; font-size: 12px; font-weight: 700; cursor: pointer; }
+.bm-order-success-grid { display: grid; grid-template-columns: minmax(0, 1.05fr) minmax(0, .95fr); gap: 24px; }
+.bm-success-card { padding: 26px; border: 1px solid #e4dedd; border-radius: 14px; background: #fff; box-shadow: 0 8px 24px rgba(50, 33, 28, .05); }
+.bm-success-card-heading { display: flex; gap: 13px; align-items: flex-start; margin-bottom: 20px; }
+.bm-success-card-kicker { color: #8b1a1a; font-size: 12px; font-weight: 800; letter-spacing: .08em; }
+.bm-success-card h2 { margin: 0 0 5px; font-size: 19px; }
+.bm-success-card-heading p { margin: 0; color: #74706e; font-size: 13px; }
+.bm-success-summary-list { margin: 0; }
+.bm-success-summary-list > div { display: flex; justify-content: space-between; gap: 20px; padding: 11px 0; border-bottom: 1px solid #f0e9e7; font-size: 13px; }
+.bm-success-summary-list dt { color: #77706d; }
+.bm-success-summary-list dd { max-width: 65%; margin: 0; color: #302927; text-align: right; font-weight: 650; overflow-wrap: anywhere; white-space: pre-wrap; }
+.bm-success-summary-list .bm-success-total { margin-top: 8px; border-bottom: 0; padding-top: 18px; }
+.bm-success-total dt { color: #302927; font-weight: 700; }
+.bm-success-total dd { color: #8b1a1a; font-size: 22px; }
+.bm-payment-card { background: #fffdfc; }
+.bm-payment-lead, .bm-cash-instructions p { color: #4f4845; font-size: 14px; line-height: 1.65; }
+.bm-payment-method-detail { display: flex; justify-content: space-between; gap: 16px; align-items: center; margin: 20px 0; padding: 18px; border: 1px solid #eadbd7; border-radius: 10px; background: #fff8f6; }
+.bm-payment-method-detail span, .bm-payment-account strong { display: block; }
+.bm-payment-method-detail span { margin-top: 4px; color: #77706d; font-size: 12px; }
+.bm-payment-account { text-align: right; }
+.bm-payment-account strong { color: #7c1717; font-size: 16px; letter-spacing: .03em; }
+.bm-payment-account button { margin-top: 7px; }
+.bm-payment-status { margin: 18px 0 0; color: #736d69; font-size: 12px; line-height: 1.6; }
+.bm-payment-status span { color: #c78822; }
+.bm-cash-instructions { padding: 18px; border: 1px solid #eadbd7; border-radius: 10px; background: #fff8f6; }
+.bm-cash-instructions strong { color: #7c1717; }
+.bm-order-success-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 12px; margin-top: 26px; }
+.bm-order-success-actions .bm-order-reference { display: contents; }
+.bm-order-success-actions .bm-order-reference button { order: 2; }
+.bm-walk-in-note { margin: 18px 0 0; color: #6b6663; text-align: center; font-size: 12px; }
+@media (max-width: 700px) { .bm-order-success-banner { grid-template-columns: auto 1fr; padding: 22px; } .bm-order-success-id { grid-column: 1 / -1; padding: 14px 0 0; border-top: 1px solid #cfe0d1; border-left: 0; text-align: left; } .bm-order-success-id strong { display: inline-block; margin-right: 10px; } .bm-order-success-grid { grid-template-columns: 1fr; gap: 16px; } .bm-success-card { padding: 20px; } .bm-order-success-actions { align-items: stretch; flex-direction: column; } .bm-order-success-actions > button { width: 100%; } }
+
+/* The app shell reserves the shared fixed navbar height for every customer page. */
+.bm-order-page, .bm-order-page * { box-sizing: border-box; }
+.bm-order-layout > *, .bm-order-steps > li { min-width: 0; }
+.bm-order-reference dl > div { display: grid; grid-template-columns: minmax(100px, 1fr) minmax(0, 2fr); gap: 16px; padding: 8px 0; }
+.bm-order-reference dd { margin: 0; }
+.bm-walk-in .bm-order-page { padding-top: 16px; }
+@media (max-width: 1023px) { .bm-order-layout { grid-template-columns: minmax(0, 1fr); } .bm-order-sidebar { position: static; } }
+@media (max-width: 600px) { .bm-order-steps { grid-template-columns: minmax(0, 1fr); gap: 12px; } .bm-order-steps li { width: 100%; } .bm-order-reference dl > div { grid-template-columns: 1fr; gap: 4px; } }
+
+/* Admin walk-in ordering uses the dashboard theme while customer ordering keeps its public styling. */
+.bm-admin-shell .bm-walk-in .bm-order-page {
+  color: var(--a-text);
+}
+.bm-admin-shell .bm-walk-in .bm-order-intro h1,
+.bm-admin-shell .bm-walk-in .bm-order-section-heading h2,
+.bm-admin-shell .bm-walk-in .bm-order-steps strong,
+.bm-admin-shell .bm-walk-in .order-step3 h3,
+.bm-admin-shell .bm-walk-in .order-step3__wallets legend {
+  color: var(--a-text);
+}
+.bm-admin-shell .bm-walk-in .bm-order-intro h1 { border-left-color: var(--a-accent); }
+.bm-admin-shell .bm-walk-in .bm-order-intro h1 + p,
+.bm-admin-shell .bm-walk-in .bm-order-section-heading p,
+.bm-admin-shell .bm-walk-in .bm-order-steps p,
+.bm-admin-shell .bm-walk-in .bm-order-art span,
+.bm-admin-shell .bm-walk-in .order-step3 dt,
+.bm-admin-shell .bm-walk-in .order-step3 small {
+  color: var(--a-secondary);
+}
+.bm-admin-shell .bm-walk-in .bm-order-steps li,
+.bm-admin-shell .bm-walk-in .bm-order-form,
+.bm-admin-shell .bm-walk-in .bm-order-progress,
+.bm-admin-shell .bm-walk-in .bm-order-security,
+.bm-admin-shell .bm-walk-in .order-step3__summary,
+.bm-admin-shell .bm-walk-in .order-step3__prices {
+  border-color: var(--a-border);
+  background: var(--a-surface);
+  color: var(--a-text);
+}
+.bm-admin-shell .bm-walk-in .bm-order-steps li.is-current,
+.bm-admin-shell .bm-walk-in .order-step3__wallets label.is-selected {
+  border-color: var(--a-accent);
+  background: #2b171e;
+}
+.bm-admin-shell .bm-walk-in .bm-order-steps .is-current .bm-order-step-number,
+.bm-admin-shell .bm-walk-in .bm-order-eyebrow,
+.bm-admin-shell .bm-walk-in .bm-order-progress-heading > span,
+.bm-admin-shell .bm-walk-in .bm-order-progress .is-current small,
+.bm-admin-shell .bm-walk-in .order-step3__total-summary dd {
+  color: #e38b9b;
+}
+.bm-admin-shell .bm-walk-in .bm-order-form,
+.bm-admin-shell .bm-walk-in .bm-order-progress,
+.bm-admin-shell .bm-walk-in .bm-order-security { box-shadow: 0 12px 30px #0003; }
+.bm-admin-shell .bm-walk-in .bm-order-page .order-step1__input,
+.bm-admin-shell .bm-walk-in .bm-order-page .order-step2__control,
+.bm-admin-shell .bm-walk-in .bm-order-page textarea,
+.bm-admin-shell .bm-walk-in .order-step3__wallets label {
+  border-color: var(--a-border);
+  background: #10141b;
+  color: var(--a-text);
+}
+.bm-admin-shell .bm-walk-in .bm-order-page input::placeholder,
+.bm-admin-shell .bm-walk-in .bm-order-page textarea::placeholder { color: #8792a4; }
+.bm-admin-shell .bm-walk-in .bm-order-page .order-step1__label,
+.bm-admin-shell .bm-walk-in .bm-order-page .order-step1__fulfillment legend,
+.bm-admin-shell .bm-walk-in .bm-order-page .order-step2__field label,
+.bm-admin-shell .bm-walk-in .order-step3__confirmation { color: var(--a-secondary); }
+.bm-admin-shell .bm-walk-in .bm-order-page .order-step1__pickup-note,
+.bm-admin-shell .bm-walk-in .bm-order-payment-notice,
+.bm-admin-shell .bm-walk-in .bm-order-page .order-step2__product-summary {
+  border-color: var(--a-border);
+  background: #171d26;
+  color: var(--a-secondary);
+}
+.bm-admin-shell .bm-walk-in .bm-order-progress progress,
+.bm-admin-shell .bm-walk-in .bm-order-progress progress::-webkit-progress-bar { background: #303744; }
+.bm-admin-shell .bm-walk-in .bm-order-security { background: #171d26; }
+.bm-admin-shell .bm-walk-in .bm-order-security > svg { color: #e38b9b; }
+.bm-admin-shell .bm-walk-in .bm-order-security p,
+.bm-admin-shell .bm-walk-in .bm-order-security > span { color: var(--a-secondary); }
+.bm-admin-shell .bm-walk-in .bm-order-page .order-step3__wallets label.is-selected { background: #2b171e; }
+.bm-admin-shell .bm-walk-in .bm-order-page .order-step1__actions,
+.bm-admin-shell .bm-walk-in .bm-order-page .order-step2__actions { border-top-color: var(--a-border); }
+
+/* The saved-order view shares the public OrderPage markup, so scope the
+   dashboard palette to walk-in success screens only. */
+.bm-admin-shell .bm-walk-in .bm-order-success-page {
+  color: var(--a-text);
+}
+.bm-admin-shell .bm-walk-in .bm-order-success-banner {
+  background: #17271f;
+  border-color: #315d49;
+}
+.bm-admin-shell .bm-walk-in .bm-order-success-copy h1,
+.bm-admin-shell .bm-walk-in .bm-success-card h2,
+.bm-admin-shell .bm-walk-in .bm-success-card strong,
+.bm-admin-shell .bm-walk-in .bm-success-summary-list dd,
+.bm-admin-shell .bm-walk-in .bm-success-total dt {
+  color: var(--a-text);
+}
+.bm-admin-shell .bm-walk-in .bm-order-success-copy > p:last-child,
+.bm-admin-shell .bm-walk-in .bm-order-success-id span,
+.bm-admin-shell .bm-walk-in .bm-success-card-heading p,
+.bm-admin-shell .bm-walk-in .bm-success-summary-list dt,
+.bm-admin-shell .bm-walk-in .bm-payment-lead,
+.bm-admin-shell .bm-walk-in .bm-cash-instructions p,
+.bm-admin-shell .bm-walk-in .bm-payment-status,
+.bm-admin-shell .bm-walk-in .bm-payment-method-detail span,
+.bm-admin-shell .bm-walk-in .bm-walk-in-note {
+  color: var(--a-secondary);
+}
+.bm-admin-shell .bm-walk-in .bm-order-success-id {
+  border-left-color: #315d49;
+}
+.bm-admin-shell .bm-walk-in .bm-order-success-id strong,
+.bm-admin-shell .bm-walk-in .bm-order-success-id button,
+.bm-admin-shell .bm-walk-in .bm-payment-account strong,
+.bm-admin-shell .bm-walk-in .bm-payment-account button,
+.bm-admin-shell .bm-walk-in .bm-success-card-kicker,
+.bm-admin-shell .bm-walk-in .bm-success-total dd,
+.bm-admin-shell .bm-walk-in .bm-cash-instructions strong {
+  color: #e38b9b;
+}
+.bm-admin-shell .bm-walk-in .bm-success-card,
+.bm-admin-shell .bm-walk-in .bm-payment-card {
+  border-color: var(--a-border);
+  background: var(--a-surface);
+  box-shadow: 0 12px 30px #0003;
+}
+.bm-admin-shell .bm-walk-in .bm-success-summary-list > div {
+  border-bottom-color: var(--a-border);
+}
+.bm-admin-shell .bm-walk-in .bm-payment-method-detail,
+.bm-admin-shell .bm-walk-in .bm-cash-instructions {
+  border-color: var(--a-border);
+  background: #171d26;
+}
+.bm-admin-shell .bm-walk-in .bm-payment-status span { color: #e8b763; }
+.bm-admin-shell .bm-walk-in .bm-order-success-actions .bm-order-reference {
+  color: var(--a-secondary);
+}
+@media (max-width: 700px) {
+  .bm-admin-shell .bm-walk-in .bm-order-success-id {
+    border-top-color: #315d49;
+  }
+}
+
+/* Step 3 has a single walk-in payment option today; keep its card compact
+   without changing the shared customer payment-method rules. */
+.bm-admin-shell .bm-walk-in .order-step3 {
+  gap: 16px;
+}
+.bm-admin-shell .bm-walk-in .order-step3__grid {
+  gap: 16px;
+}
+.bm-admin-shell .bm-walk-in .order-step3__summary,
+.bm-admin-shell .bm-walk-in .order-step3__prices {
+  padding: 18px;
+}
+.bm-admin-shell .bm-walk-in .order-step3__summary dl > div,
+.bm-admin-shell .bm-walk-in .order-step3__prices dl > div {
+  align-items: flex-start;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--a-border);
+}
+.bm-admin-shell .bm-walk-in .order-step3__summary dl > div:last-child,
+.bm-admin-shell .bm-walk-in .order-step3__prices dl > div:last-child {
+  border-bottom: 0;
+}
+.bm-admin-shell .bm-walk-in .order-step3 dd {
+  color: var(--a-text);
+}
+.bm-admin-shell .bm-walk-in .order-step3__wallets {
+  margin-top: 16px;
+}
+.bm-admin-shell .bm-walk-in .order-step3__wallets > div {
+  grid-template-columns: minmax(0, 1fr);
+}
+.bm-admin-shell .bm-walk-in .order-step3__wallets label {
+  min-height: 72px;
+  padding: 14px;
+}
+.bm-admin-shell .bm-walk-in .order-step3__wallets label > span {
+  min-width: 0;
+}
+.bm-admin-shell .bm-walk-in .order-step3__wallets label strong,
+.bm-admin-shell .bm-walk-in .order-step3__wallets label small {
+  overflow-wrap: anywhere;
+}
+.bm-admin-shell .bm-walk-in .order-step3__confirmation {
+  align-items: flex-start;
+  gap: 10px;
+  margin: 0;
+  padding: 13px 14px;
+  border: 1px solid var(--a-border);
+  border-radius: 8px;
+  background: #171d26;
+}
+.bm-admin-shell .bm-walk-in .order-step3__confirmation input {
+  flex: 0 0 18px;
+  width: 18px;
+  height: 18px;
+  margin: 2px 0 0;
+}
+.bm-admin-shell .bm-walk-in .order-step3__confirmation span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.bm-admin-shell .bm-walk-in .order-step3__actions {
+  align-items: center;
+  margin-top: 0;
+  padding-top: 14px;
+}
+.bm-admin-shell .bm-walk-in .order-step3__actions > button {
+  min-height: 44px;
+}
+@media (max-width: 600px) {
+  .bm-admin-shell .bm-walk-in .order-step3__actions {
+    align-items: stretch;
+  }
+  .bm-admin-shell .bm-walk-in .order-step3__actions > button {
+    flex: 1 1 100%;
+  }
+}

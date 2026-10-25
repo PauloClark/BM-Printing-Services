@@ -1,12 +1,15 @@
+import { ProductSpecificationEditor } from '../Common/ProductSpecificationEditor';
 import { JobOrders } from './JobOrders';
 import { ArchivedOrders, CompletedOrdersReport } from './AdminOrderArchive';
 import { InventoryMaterials } from './InventoryMaterials';
-import { ORDER_STATUSES, displayOrderStatus } from '../../../shared/orderWorkflow';
-import { orderApi } from '../../utils/orderApi';
+import { ORDER_STATUSES, PRODUCTION_OVERVIEW_STATUSES, displayOrderStatus, productionOverviewStatus } from '../../../shared/orderWorkflow';
+import { apiUrl, orderApi, orderFileApi } from '../../utils/orderApi';
 import { publicAsset } from '../../utils/assets';
-import { store } from '../../utils/storage';
+
 import { StaffOrders } from './StaffOrders';
 import { AdminPayments } from './AdminPayments';
+import { FinancialManagement } from './FinancialManagement';
+import { NotificationDeliveryAdmin } from './NotificationDeliveryAdmin';
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { C } from '../../constants/colors';
 import { showToast } from '../../utils/notifications';
@@ -18,6 +21,7 @@ import { Badge } from '../Common/Badge';
 import { BMLogo } from '../Common/BMLogo';
 import { PickupConfirmationModal } from '../Common/PickupConfirmationModal';
 import { EmployeeManagement } from './EmployeeManagement';
+import { PRODUCT_LOW_STOCK_MAX, productAvailability } from '../../../shared/productStock';
 import './AdminPanel.css';
 
 const STATUS_LIST = ORDER_STATUSES;
@@ -41,15 +45,6 @@ const ORDER_STATUS_COLORS = {
 const fmt = (v) => `₱${Number(v || 0).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 const fmtDate = (d) => d ? new Date(d).toLocaleDateString('en-PH', { year: 'numeric', month: 'short', day: 'numeric' }) : '';
 
-const getToken = async () => {
-  const session = await store.get('session');
-  if (session?.token) return session.token;
-  const { supabase } = await import('../../utils/supabaseClient');
-  const { data } = await supabase.auth.getSession();
-  return data.session?.access_token || '';
-};
-const api = async (url, opts = {}) => orderApi(url, opts, await store.get('session'));
-
 const SIDEBAR_GROUPS = [
   { label: 'Overview', items: [{ id: 'dashboard', icon: 'dashboard', label: 'Dashboard' }] },
   { label: 'Management', items: [
@@ -59,6 +54,7 @@ const SIDEBAR_GROUPS = [
     { id: 'employees', icon: 'badge', label: 'Staff / Employees' }
   ]},
   { label: 'Operations', items: [
+    { id: 'walkin', icon: 'orders', label: 'Walk-In Orders' },
     { id: 'payments', icon: 'card', label: 'Payments for Verification' },
     { id: 'jobs', icon: 'clipboard', label: 'Job Orders' },
     { id: 'inventory', icon: 'layers', label: 'Inventory' },
@@ -67,12 +63,23 @@ const SIDEBAR_GROUPS = [
     { id: 'archive', icon: 'archive', label: 'Archived Orders' }
   ]},
   { label: 'Analytics', items: [
+    { id: 'financials', icon: 'chart', label: 'Financial Management' },
     { id: 'reports', icon: 'chart', label: 'Reports' },
     { id: 'audit', icon: 'file', label: 'Audit Logs' }
   ]},
-  { label: 'System', items: [{ id: 'system', icon: 'sliders', label: 'System Settings' }] }
+  { label: 'System', items: [
+    { id: 'notification-delivery', icon: 'file', label: 'Notification Delivery' },
+    { id: 'system', icon: 'sliders', label: 'System Settings' }
+  ] }
 ];
 const SIDEBAR_ITEMS = SIDEBAR_GROUPS.flatMap(group => group.items);
+const ADMIN_TAB_IDS = new Set(SIDEBAR_ITEMS.map(item => item.id));
+const adminTabFromLocation = () => {
+  if (typeof window === 'undefined') return 'dashboard';
+  const hash = window.location.hash.replace(/^#\/?/, '');
+  const candidate = hash.startsWith('admin/') ? hash.slice('admin/'.length) : '';
+  return ADMIN_TAB_IDS.has(candidate) ? candidate : 'dashboard';
+};
 
 const Icon = ({ name, size = 18 }) => {
   const paths = {
@@ -137,7 +144,8 @@ const StatusRow = ({ label, count, total, color }) => {
 };
 
 export default function AdminPanel({ user, showToast: notify, onLogout }) {
-  const [tab, setTab] = useState('dashboard');
+  const api = useCallback((url, opts = {}) => orderApi(url, opts, user), [user]);
+  const [tab, setTab] = useState(adminTabFromLocation);
   const [sidebarOpen, setSidebarOpen] = useState(() => typeof window === 'undefined' || window.innerWidth > 720);
   const [summary, setSummary] = useState(null);
   const [dashboardLoading, setDashboardLoading] = useState(true);
@@ -159,7 +167,7 @@ export default function AdminPanel({ user, showToast: notify, onLogout }) {
   const [customersWarning, setCustomersWarning] = useState('');
   const [auditLogs, setAuditLogs] = useState([]);
   const [editingProduct, setEditingProduct] = useState(null);
-  const emptyProduct = { name: '', category: '', description: '', price: '', minQty: 1, unit: 'per piece', image: '', imageFit: 'contain', specificationType: 'general', popular: false, active: true, trackStock: false, stock: 0, lowStockThreshold: 0 };
+  const emptyProduct = { name: '', category: '', description: '', price: '', minQty: 1, unit: 'per piece', image: '', imageFit: 'contain', specificationType: 'general', specificationFields: [], popular: false, active: true, trackStock: false, stock: 0, lowStockThreshold: PRODUCT_LOW_STOCK_MAX };
   const [newProduct, setNewProduct] = useState(emptyProduct);
   const [newProductImage, setNewProductImage] = useState(null);
   const [productLoading, setProductLoading] = useState(false);
@@ -274,9 +282,21 @@ export default function AdminPanel({ user, showToast: notify, onLogout }) {
 
   useEffect(() => { loadData(); }, [loadData]);
 
+  useEffect(() => {
+    const restoreFromLocation = () => setTab(adminTabFromLocation());
+    window.addEventListener('popstate', restoreFromLocation);
+    window.addEventListener('hashchange', restoreFromLocation);
+    return () => {
+      window.removeEventListener('popstate', restoreFromLocation);
+      window.removeEventListener('hashchange', restoreFromLocation);
+    };
+  }, []);
+
   const navigateAdmin = useCallback((nextTab) => {
+    if (!ADMIN_TAB_IDS.has(nextTab)) return;
     setAccountOpen(false);
     setTab(nextTab);
+    window.history.pushState(null, '', `#admin/${nextTab}`);
     if (window.innerWidth <= 720) setSidebarOpen(false);
   }, []);
 
@@ -361,9 +381,9 @@ export default function AdminPanel({ user, showToast: notify, onLogout }) {
 
   const statusCounts = {};
   orders.forEach(o => { statusCounts[displayOrderStatus(o.status)] = (statusCounts[displayOrderStatus(o.status)] || 0) + 1; });
-  const lowStockProducts = products.filter(p => p.trackStock === true && p.stock <= p.lowStockThreshold);
+  const lowStockProducts = products.filter(p => p.trackStock === true && p.stock > 0 && p.stock <= PRODUCT_LOW_STOCK_MAX);
   const prodCounts = {};
-  productions.forEach(p => { prodCounts[p.status] = (prodCounts[p.status] || 0) + 1; });
+  productions.forEach(p => { const status = productionOverviewStatus(p.status); prodCounts[status] = (prodCounts[status] || 0) + 1; });
 
   const handleExport = async () => {
     try {
@@ -371,7 +391,7 @@ export default function AdminPanel({ user, showToast: notify, onLogout }) {
         ? `${reportDate.getFullYear()}-${String(reportDate.getMonth()+1).padStart(2,'0')}-${String(reportDate.getDate()).padStart(2,'0')}`
         : String(reportDate);
       const token = await getToken();
-      const response = await fetch(`/api/admin/reports/orders/${ds}/download`, { headers: { 'Authorization': `Bearer ${token}` } });
+      const response = await fetch(apiUrl(`/api/admin/reports/orders/${ds}/download`), { headers: { 'Authorization': `Bearer ${token}` } });
       if (!response.ok) {
         const err = await response.json().catch(() => ({}));
         throw new Error(err.error || `Download failed (HTTP ${response.status})`);
@@ -394,6 +414,7 @@ export default function AdminPanel({ user, showToast: notify, onLogout }) {
     switch (tab) {
       case 'dashboard': return renderDashboard();
       case 'orders': return <StaffOrders user={user} showToast={notify} onReviewPayment={() => navigateAdmin('payments')} />;
+      case 'walkin': return <StaffOrders user={user} showToast={notify} onReviewPayment={() => navigateAdmin('payments')} walkInOnly />;
       case 'pickup': return renderPickup();
       case 'payments': return <AdminPayments user={user} showToast={notify} />;
       case 'products': return renderProducts();
@@ -403,8 +424,10 @@ export default function AdminPanel({ user, showToast: notify, onLogout }) {
       case 'production': return renderProduction();
       case 'customers': return renderCustomers();
       case 'employees': return <EmployeeManagement showToast={notify || showToast} />;
+      case 'financials': return <FinancialManagement user={user} />;
       case 'reports': return <><CompletedOrdersReport user={user} />{renderReports()}</>;
       case 'audit': return renderAudit();
+      case 'notification-delivery': return <NotificationDeliveryAdmin user={user} showToast={notify} />;
       case 'system': return renderSystem();
       default: return renderDashboard();
     }
@@ -702,16 +725,16 @@ export default function AdminPanel({ user, showToast: notify, onLogout }) {
             <Input label="Minimum Quantity" type="number" value={newProduct.minQty} onChange={minQty => setNewProduct(p => ({ ...p, minQty }))} required min="1" />
             <Input label="Unit Label" value={newProduct.unit} onChange={unit => setNewProduct(p => ({ ...p, unit }))} required />
             <Input label="Image Path or URL" value={newProduct.image} onChange={image => setNewProduct(p => ({ ...p, image }))} />
-            <label>Specification type<select value={newProduct.specificationType} onChange={e => setNewProduct(p => ({ ...p, specificationType: e.target.value }))}>{['general','clothing','hoodie','schoolId','banner','mug','sticker','backdrop'].map(value => <option key={value} value={value}>{value}</option>)}</select></label>
+            <label>Specification type<select value={newProduct.specificationType} onChange={e => setNewProduct(p => ({ ...p, specificationType: e.target.value, specificationFields: [] }))}>{['general','clothing','hoodie','schoolId','banner','mug','sticker','backdrop'].map(value => <option key={value} value={value}>{value}</option>)}</select></label>
             <label>Image fit<select value={newProduct.imageFit} onChange={e => setNewProduct(p => ({ ...p, imageFit: e.target.value }))}><option value="contain">Contain</option><option value="cover">Cover</option></select></label>
           </div>
-          <label className="bm-product-description">Description<textarea required value={newProduct.description} onChange={e => setNewProduct(p => ({ ...p, description: e.target.value }))}/></label>
+          <ProductSpecificationEditor product={newProduct} onChange={specificationFields => setNewProduct(p => ({ ...p, specificationFields }))}/><label className="bm-product-description">Description<textarea required value={newProduct.description} onChange={e => setNewProduct(p => ({ ...p, description: e.target.value }))}/></label>
           <div className="bm-product-flags">
             <label><input type="checkbox" checked={newProduct.active} onChange={e => setNewProduct(p => ({ ...p, active: e.target.checked }))}/> Available to customers</label>
             <label><input type="checkbox" checked={newProduct.popular} onChange={e => setNewProduct(p => ({ ...p, popular: e.target.checked }))}/> Featured as popular</label>
-            <label><input type="checkbox" checked={newProduct.trackStock} onChange={e => setNewProduct(p => ({ ...p, trackStock: e.target.checked }))}/> Track finished-product stock</label>
+            <label><input type="checkbox" checked={newProduct.trackStock} onChange={e => setNewProduct(p => ({ ...p, trackStock: e.target.checked, lowStockThreshold: PRODUCT_LOW_STOCK_MAX }))}/> Track product stock</label>
           </div>
-          {newProduct.trackStock && <div className="bm-product-form-grid bm-product-stock-fields"><Input label="Stock" type="number" value={newProduct.stock} onChange={stock => setNewProduct(p => ({ ...p, stock }))} min="0"/><Input label="Low Stock Threshold" type="number" value={newProduct.lowStockThreshold} onChange={lowStockThreshold => setNewProduct(p => ({ ...p, lowStockThreshold }))} min="0"/></div>}
+          {newProduct.trackStock && <div className="bm-product-form-grid bm-product-stock-fields"><Input label="Stock Quantity" type="number" value={newProduct.stock} onChange={stock => setNewProduct(p => ({ ...p, stock }))} min="0" step="1"/><Input label="Low-stock threshold" type="number" value={newProduct.lowStockThreshold} onChange={lowStockThreshold => setNewProduct(p => ({ ...p, lowStockThreshold }))} min="0" step="1"/><p className="bm-product-stock-help">Stock from 1–5 is marked Low Stock. Stock above 5 is In Stock.</p></div>}
           <div className="bm-product-form-actions"><Btn type="submit" variant="primary">{editingProduct ? 'Save Changes' : 'Add Product'}</Btn><Btn variant="ghost" onClick={() => { setEditingProduct(null); setNewProduct(emptyProduct); setNewProductImage(null); }}>{editingProduct ? 'Cancel Edit' : 'Clear'}</Btn></div>
         </form>
       </Card>
@@ -719,7 +742,7 @@ export default function AdminPanel({ user, showToast: notify, onLogout }) {
         <div className="bm-product-list-head"><div><h4 style={cardTitle}>Product List ({products.length})</h4><p>Inactive products remain visible here but are excluded from customer ordering.</p></div><input type="search" value={productSearch} onChange={e => setProductSearch(e.target.value)} placeholder="Search products" aria-label="Search managed products"/></div>
         {productLoading ? <div className="bm-product-state">Loading products…</div> : productError ? <div className="bm-product-state is-error" role="alert">{productError}<button type="button" onClick={loadData}>Retry</button></div> : !products.length ? <div className="bm-product-state"><strong>No managed products yet.</strong><span>The seven legacy catalog products are ready for dry-run migration, pending approval.</span></div> : !filteredProducts.length ? <div className="bm-product-state">No products match this search.</div> : <div className="bm-product-table-wrap"><table><thead><tr>{['Product','Category','Price','Availability','Stock model','Actions'].map(h => <th key={h}>{h}</th>)}</tr></thead><tbody>{filteredProducts.map(product => <tr key={product.id}>
           <td><div className="bm-product-identity">{product.image ? <img src={publicAsset(product.image)} alt=""/> : <span className="bm-product-placeholder" aria-hidden="true"/>}<div><strong>{product.name}</strong><small>#{product.id} · min. {product.minQty} {product.unit}</small></div></div></td>
-          <td>{product.category}</td><td><strong>{fmt(product.price)}</strong></td><td><Badge status={product.active ? 'Active' : 'Inactive'}/></td><td>{product.trackStock ? `${product.stock} available` : 'Made to order'}</td>
+          <td>{product.category}</td><td><strong>{fmt(product.price)}</strong></td><td><Badge status={product.active ? 'Active' : 'Inactive'}/></td><td><span className={`bm-product-availability is-${productAvailability(product).code}`}>{productAvailability(product).label}</span></td>
           <td><div className="bm-product-row-actions"><button type="button" onClick={() => edit(product)}>Edit</button><button type="button" onClick={() => handleDelete(product.id)}>{product.active ? 'Deactivate' : 'Activate'}</button>{product.trackStock && <><button type="button" aria-label={`Increase ${product.name} stock`} onClick={() => handleStock(product.id, 'increase')}>+</button><button type="button" aria-label={`Decrease ${product.name} stock`} onClick={() => handleStock(product.id, 'decrease')}>−</button></>}</div></td>
         </tr>)}</tbody></table></div>}
       </Card>
@@ -731,9 +754,9 @@ export default function AdminPanel({ user, showToast: notify, onLogout }) {
       <h3 style={sectionTitle}>Inventory Management</h3>
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 14, marginBottom: 24 }}>
         <StatCard label="Total Products" value={products.length} color={C.info} />
-        <StatCard label="In Stock" value={products.filter(p => p.trackStock === true && p.stock > p.lowStockThreshold).length} color={C.success} />
+        <StatCard label="In Stock" value={products.filter(p => p.trackStock === true && p.stock > PRODUCT_LOW_STOCK_MAX).length} color={C.success} />
         <StatCard label="Low Stock" value={lowStockProducts.length} color={C.warning} />
-        <StatCard label="Out of Stock" value={products.filter(p => p.stock === 0).length} color="#c62828" />
+        <StatCard label="Out of Stock" value={products.filter(p => p.trackStock === true && p.stock === 0).length} color="#c62828" />
       </div>
 
       {lowStock.length > 0 && (
@@ -794,7 +817,7 @@ export default function AdminPanel({ user, showToast: notify, onLogout }) {
     <div>
       <h3 style={sectionTitle}>Production Overview ({productions.length})</h3>
       <div className="bm-production-summary">
-        {['Queued','In Production','Quality Check','Ready','Completed','Delayed'].map(s => (
+        {PRODUCTION_OVERVIEW_STATUSES.map(s => (
           <Card className="bm-production-stat" key={s} style={{ '--production-color': ORDER_STATUS_COLORS[s]?.color || '#d8798a' }}>
             <div className="bm-production-stat__value">{prodCounts[s] || 0}</div>
             <div className="bm-production-stat__label">{s}</div>
@@ -978,7 +1001,7 @@ export default function AdminPanel({ user, showToast: notify, onLogout }) {
             <NotificationBell user={user} dark onNavigate={item => navigateAdmin(item.type === 'payment_submitted' ? 'payments' : item.relatedJobId ? 'jobs' : item.relatedOrderId ? 'orders' : 'dashboard')} />
             <div className="bm-admin-account" ref={accountMenuRef}>
               <button type="button" className="bm-admin-account-trigger" aria-haspopup="menu" aria-expanded={accountOpen} onClick={() => setAccountOpen(open => !open)} onKeyDown={event => { if (event.key === 'ArrowDown') { event.preventDefault(); setAccountOpen(true); requestAnimationFrame(() => accountMenuRef.current?.querySelector('[role=menuitem]')?.focus()); } }}>
-                <span className="bm-admin-avatar" aria-hidden="true">{user?.name?.[0] || user?.email?.[0] || 'A'}</span>
+                <span className="bm-admin-avatar" aria-hidden="true"><BMLogo size={34} alt="" /></span>
                 <span className="bm-admin-account-copy"><strong>{user?.name || 'Administrator'}</strong><small>Administrator</small></span>
                 <svg className="bm-admin-account-chevron" aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M6 9l6 6 6-6"/></svg>
               </button>

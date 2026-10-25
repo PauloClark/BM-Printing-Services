@@ -1,5 +1,7 @@
 ﻿import { rememberOrderReturn, hasOrderReturn, consumeAuthDestination, authCallbackUrl } from '../src/utils/authReturn';
 
+import { jest } from '@jest/globals';
+
 beforeEach(() => {
   const values = new Map();
   global.sessionStorage = { getItem: key => values.get(key), setItem: (key, value) => values.set(key, value), removeItem: key => values.delete(key) };
@@ -8,7 +10,7 @@ beforeEach(() => {
 afterEach(() => { delete global.window; delete global.sessionStorage; });
 it('returns customers to orders once and preserves OAuth/verification callback intent', () => {
   rememberOrderReturn();
-  expect(authCallbackUrl()).toBe('https://bm.example/?authReturn=order');
+  expect(authCallbackUrl()).toBe('https://bm.example/auth/confirm?authReturn=order');
   expect(consumeAuthDestination('customer')).toBe('order');
   expect(hasOrderReturn()).toBe(false);
   expect(consumeAuthDestination('customer')).toBe('home');

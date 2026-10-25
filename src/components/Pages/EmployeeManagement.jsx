@@ -8,6 +8,7 @@ const callApi = async (url, options = {}) => orderApi(url, options, await store.
 export function EmployeeManagement({ showToast }) {
   const [employees, setEmployees] = useState([]);
   const [accounts, setAccounts] = useState([]);
+  const [accountCandidates, setAccountCandidates] = useState([]);
   const [loading, setLoading] = useState(true);
   const [accountsError, setAccountsError] = useState('');
   const [editing, setEditing] = useState(null);
@@ -24,6 +25,13 @@ export function EmployeeManagement({ showToast }) {
       const data = await callApi('/api/employees/auth-accounts');
       setAccounts(data.accounts || []); setAccountsError('');
     } catch (error) { setAccountsError(error.message || 'Staff authentication directory is unavailable.'); }
+    try {
+      const data = await callApi('/api/employees/auth-account-candidates');
+      setAccountCandidates(data.accounts || []);
+    } catch (error) {
+      setAccountCandidates([]);
+      setAccountsError(current => current || error.message || 'Existing account candidates could not be loaded.');
+    }
     finally { setLoading(false); }
   }, [showToast]);
   useEffect(() => { load(); }, [load]);
@@ -47,13 +55,25 @@ export function EmployeeManagement({ showToast }) {
   };
   const togglePermission = permission => setForm(current => ({ ...current, permissions: current.permissions.includes(permission) ? current.permissions.filter(item => item !== permission) : [...current.permissions, permission] }));
   const selectableAccounts = accounts.filter(account => !account.linkedEmployee || account.id === form.supabaseUserId);
+  const authorizeAccount = async account => {
+    if (!window.confirm(`Authorize ${account.email} as a staff account? This gives that existing account access to the BM Printing Services staff area. Confirm this is the employee's account.`)) return;
+    setSaving(true);
+    try {
+      await callApi('/api/employees/auth-accounts/authorize', { method: 'POST', body: JSON.stringify({ userId: account.id, email: account.email }) });
+      showToast(`${account.email} authorized as staff. Now choose it in that employee's Link Account form.`, 'success');
+      await load();
+    } catch (error) { showToast(error.message || 'Unable to authorize this account.', 'error'); }
+    finally { setSaving(false); }
+  };
 
   return <section className="bm-employees">
     <div className="bm-employees-toolbar"><div><h3>Staff / Employees</h3><p>Manage employee records and link them to verified staff authentication accounts.</p></div><button className="bm-employee-primary" onClick={() => openForm(null)}>Add Employee</button></div>
     {accountsError && <div className="bm-employee-notice" role="status">{accountsError} Employee records remain available, but account linking requires the backend Supabase service role configuration.</div>}
+    {!accountsError && !accounts.length && !accountCandidates.length && !loading && <div className="bm-employee-notice" role="status">No eligible Supabase accounts were found. Create or confirm each employee's existing account, then refresh. The shared legacy login cannot be linked to an individual employee.</div>}
     <div className="bm-employee-summary"><div><strong>{employees.length}</strong><span>Total employees</span></div><div><strong>{employees.filter(item => item.active).length}</strong><span>Active</span></div><div><strong>{employees.filter(item => item.linked).length}</strong><span>Accounts linked</span></div><div><strong>{employees.filter(item => item.active && item.linked).length}</strong><span>Assignable</span></div></div>
+    {!!accountCandidates.length && <div className="bm-employee-candidates"><div><h4>Existing accounts needing staff access</h4><p>To link an account, first authorize the employee's confirmed account here. This grants the selected account staff-area access; it does not create credentials. Then use Link Account on the employee row.</p></div><div className="bm-employee-candidate-list">{accountCandidates.map(account => <div key={account.id}><span><strong>{account.name}</strong><small>{account.email}</small></span><button disabled={saving || Boolean(account.linkedEmployee)} onClick={() => authorizeAccount(account)}>{account.linkedEmployee ? `Linked to ${account.linkedEmployee.employeeName}` : 'Authorize Staff'}</button></div>)}</div></div>}
     <div className="bm-employee-table-wrap"><table><thead><tr><th>Employee</th><th>Position</th><th>Account</th><th>Access</th><th>Jobs</th><th>Status</th><th></th></tr></thead><tbody>
-      {employees.map(employee => <tr key={employee.id}><td><strong>{employee.name}</strong><small>{employee.email}{employee.phone ? ` · ${employee.phone}` : ''}</small></td><td>{employee.position}</td><td><span className={`bm-link-state ${employee.linked ? 'is-linked' : ''}`}>{employee.linked ? 'Linked' : 'Not linked'}</span>{employee.mustChangePassword && <small>Password change required</small>}</td><td>{employee.permissions.length === 2 ? 'Assigned jobs + updates' : employee.permissions.length ? 'Limited' : 'No job access'}</td><td>{employee.assignedJobs}</td><td><span className={`bm-employee-status ${employee.active ? 'is-active' : ''}`}>{employee.active ? 'Active' : 'Inactive'}</span></td><td><div className="bm-employee-actions"><button onClick={() => openForm(employee)}>Edit</button>{employee.active && <button onClick={() => deactivate(employee)}>Deactivate</button>}</div></td></tr>)}
+      {employees.map(employee => <tr key={employee.id}><td><strong>{employee.name}</strong><small>{employee.email}{employee.phone ? ` · ${employee.phone}` : ''}</small></td><td>{employee.position}</td><td><span className={`bm-link-state ${employee.linked ? 'is-linked' : ''}`}>{employee.linked ? 'Linked' : 'Not linked'}</span>{employee.mustChangePassword && employee.linked && <small>Password change required</small>}</td><td>{employee.permissions.length === 2 ? 'Assigned jobs + updates' : employee.permissions.length ? 'Limited' : 'No job access'}</td><td>{employee.assignedJobs}</td><td><span className={`bm-employee-status ${employee.active ? 'is-active' : ''}`}>{employee.active ? 'Active' : 'Inactive'}</span></td><td><div className="bm-employee-actions">{!employee.linked && <button className="bm-employee-link-action" onClick={() => openForm(employee)}>Link Account</button>}<button onClick={() => openForm(employee)}>Edit</button>{employee.active && <button onClick={() => deactivate(employee)}>Deactivate</button>}</div></td></tr>)}
       {!loading && employees.length === 0 && <tr><td colSpan="7" className="bm-employee-empty">No employee records yet. Add an employee, then link an existing staff account.</td></tr>}
       {loading && <tr><td colSpan="7" className="bm-employee-empty">Loading employees…</td></tr>}
     </tbody></table></div>

@@ -41,8 +41,8 @@ describe('phoneOtpErrorMessage', () => {
 describe('Supabase Phone Auth actions', () => {
   it('sends the OTP to the normalized E.164 number and allows user creation', async () => {
     const signInWithOtp = jest.fn().mockResolvedValue({ error: null });
-    await expect(requestPhoneOtp({ auth: { signInWithOtp } }, '09171234567')).resolves.toBe('+639171234567');
-    expect(signInWithOtp).toHaveBeenCalledWith({ phone: '+639171234567', options: { shouldCreateUser: true } });
+    await expect(requestPhoneOtp({ auth: { signInWithOtp } }, '09171234567', 'captcha-phone')).resolves.toBe('+639171234567');
+    expect(signInWithOtp).toHaveBeenCalledWith({ phone: '+639171234567', options: { shouldCreateUser: true, captchaToken: 'captcha-phone' } });
   });
 
   it('never calls Supabase for an invalid number', async () => {

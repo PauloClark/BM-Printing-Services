@@ -1,33 +1,27 @@
 import { useEffect, useRef } from 'react';
 
-const TURNSTILE_SCRIPT_URL = 'https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit';
-const TURNSTILE_DEVELOPMENT_SITE_KEY = '1x00000000000000000000AA';
-const TURNSTILE_SITE_KEY = import.meta.env.DEV && import.meta.env.VITE_TURNSTILE_USE_TEST_KEYS === 'true'
-  ? TURNSTILE_DEVELOPMENT_SITE_KEY
-  : import.meta.env.VITE_TURNSTILE_SITE_KEY || '';
-let turnstileScriptPromise;
+const SCRIPT_URL = 'https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit';
+const TEST_SITE_KEY = '1x00000000000000000000AA';
+const siteKey = import.meta.env.DEV && import.meta.env.VITE_TURNSTILE_USE_TEST_KEYS === 'true'
+  ? TEST_SITE_KEY : import.meta.env.VITE_TURNSTILE_SITE_KEY || '';
+let scriptPromise;
 
-function loadTurnstileScript() {
+function loadScript() {
   if (window.turnstile) return Promise.resolve(window.turnstile);
-  if (turnstileScriptPromise) return turnstileScriptPromise;
-
-  turnstileScriptPromise = new Promise((resolve, reject) => {
+  if (scriptPromise) return scriptPromise;
+  scriptPromise = new Promise((resolve, reject) => {
     const script = document.createElement('script');
-    script.src = TURNSTILE_SCRIPT_URL;
+    script.src = SCRIPT_URL;
     script.async = true;
     script.defer = true;
     script.onload = () => window.turnstile ? resolve(window.turnstile) : reject(new Error('Turnstile did not load.'));
-    script.onerror = () => {
-      turnstileScriptPromise = undefined;
-      script.remove();
-      reject(new Error('Turnstile could not be loaded.'));
-    };
+    script.onerror = () => { scriptPromise = undefined; script.remove(); reject(new Error('Turnstile could not be loaded.')); };
     document.head.appendChild(script);
   });
-  return turnstileScriptPromise;
+  return scriptPromise;
 }
 
-export const TurnstileWidget = ({ resetSignal, onTokenChange, onStatusChange }) => {
+export const TurnstileWidget = ({ resetSignal = 0, onTokenChange, onStatusChange }) => {
   const containerRef = useRef(null);
   const widgetIdRef = useRef(null);
   const callbacksRef = useRef({ onTokenChange, onStatusChange });
@@ -35,59 +29,38 @@ export const TurnstileWidget = ({ resetSignal, onTokenChange, onStatusChange }) 
 
   useEffect(() => {
     let active = true;
-    if (!TURNSTILE_SITE_KEY) {
-      onStatusChange('unavailable');
+    if (!siteKey) {
+      callbacksRef.current.onTokenChange('');
+      callbacksRef.current.onStatusChange('unavailable');
       return () => { active = false; };
     }
-
-    onStatusChange('loading');
-    loadTurnstileScript().then(turnstile => {
+    callbacksRef.current.onStatusChange('loading');
+    loadScript().then(turnstile => {
       if (!active || !containerRef.current) return;
       widgetIdRef.current = turnstile.render(containerRef.current, {
-        sitekey: TURNSTILE_SITE_KEY,
+        sitekey: siteKey,
         size: 'flexible',
-        callback: token => {
-          callbacksRef.current.onTokenChange(token);
-          callbacksRef.current.onStatusChange('ready');
-        },
-        'expired-callback': () => {
+        callback: token => { callbacksRef.current.onTokenChange(token); callbacksRef.current.onStatusChange('ready'); },
+        'expired-callback': () => { callbacksRef.current.onTokenChange(''); callbacksRef.current.onStatusChange('expired'); },
+        'timeout-callback': () => { callbacksRef.current.onTokenChange(''); callbacksRef.current.onStatusChange('expired'); },
+        'error-callback': code => {
           callbacksRef.current.onTokenChange('');
-          callbacksRef.current.onStatusChange('expired');
-        },
-        'error-callback': errorCode => {
-          callbacksRef.current.onTokenChange('');
-          callbacksRef.current.onStatusChange(String(errorCode).startsWith('110200') ? 'hostname-not-authorized' : 'unavailable');
-        },
-        'timeout-callback': () => {
-          callbacksRef.current.onTokenChange('');
-          callbacksRef.current.onStatusChange('expired');
+          callbacksRef.current.onStatusChange(String(code).startsWith('110200') ? 'hostname-not-authorized' : 'unavailable');
         }
       });
-      callbacksRef.current.onStatusChange('ready');
-    }).catch(() => {
-      if (active) callbacksRef.current.onStatusChange('unavailable');
-    });
-
+    }).catch(() => { if (active) callbacksRef.current.onStatusChange('unavailable'); });
     return () => {
       active = false;
-      if (widgetIdRef.current !== null) {
-        window.turnstile?.remove(widgetIdRef.current);
-        widgetIdRef.current = null;
-      }
+      if (widgetIdRef.current !== null) window.turnstile?.remove(widgetIdRef.current);
+      widgetIdRef.current = null;
     };
-  }, [onStatusChange]);
+  }, []);
 
   useEffect(() => {
-    if (resetSignal === 0) return;
+    if (!resetSignal) return;
     callbacksRef.current.onTokenChange('');
-    if (widgetIdRef.current !== null) {
-      window.turnstile?.reset(widgetIdRef.current);
-    }
+    if (widgetIdRef.current !== null) window.turnstile?.reset(widgetIdRef.current);
   }, [resetSignal]);
 
-  return (
-    <div className="bm-turnstile-wrap" role="group" aria-label="Security verification">
-      <div ref={containerRef} className="bm-turnstile-widget" />
-    </div>
-  );
+  return <div className="bm-turnstile-wrap" role="group" aria-label="Security verification"><div ref={containerRef} className="bm-turnstile-widget" /></div>;
 };

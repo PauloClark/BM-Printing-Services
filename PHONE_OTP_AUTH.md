@@ -1,5 +1,9 @@
 # Phone / SMS OTP Authentication (Supabase Phone Auth)
 
+> Current staging UI status: `PhoneOtpPanel` is not mounted by Login or Register,
+> so users cannot initiate SMS from the application. The component forwards a
+> Turnstile token to Supabase and is protected if it is deliberately re-enabled.
+
 BM Printing Services supports three sign-in methods on the same Login page and
 Register page. **None of them replace each other:**
 
@@ -14,8 +18,6 @@ Register page. **None of them replace each other:**
 ```
 Customer
    ↓  enters Philippine mobile number (0917 123 4567 → +639171234567)
-Cloudflare Turnstile (server-verified, reuses the existing /api/turnstile/verify)
-   ↓
 Supabase Phone Auth (signInWithOtp)
    ↓
 SMS provider configured in the Supabase Dashboard
@@ -40,8 +42,9 @@ digits once.
 - Verification is delegated to Supabase; the client cannot approve itself.
 - A resend cooldown mirrors the Supabase OTP expiry window, and the Send button
   is disabled while a request is in flight.
-- Send-OTP is gated by the existing server-side Turnstile verification, so the
-  SMS provider cannot be used as a free SMS relay.
+- The Turnstile token is passed as Supabase `options.captchaToken`; Supabase
+  verifies it before initiating SMS. Provider rate limits and the UI resend
+  cooldown remain additional controls.
 - Roles come only from Supabase `app_metadata.role` (server-controlled). A
   phone-authenticated customer is always `customer` and cannot self-assign
   `staff` or `admin`; `user_metadata` is ignored for authorization.
@@ -86,7 +89,8 @@ never commit their values.
 3. Open Login → **Phone** tab (Register → **Phone** behaves identically).
 4. Enter a Philippine mobile number, e.g. `0917 123 4567`. It is normalized to
    `+639171234567`.
-5. Complete the Turnstile widget, then click **SEND OTP**.
+5. Complete Turnstile, then click **SEND OTP**. Supabase Auth must have CAPTCHA
+   protection enabled in its Dashboard for server-enforced verification.
 6. Enter the 6-digit code from the SMS and click **VERIFY OTP**.
 7. You are signed in as a customer. Confirm Products, Order Now, My Orders,
    Track Order and Logout all behave exactly as with email sign-in.
